@@ -7,7 +7,7 @@ Select two Pokémon, choose damaging moves, and simulate a battle with type effe
 
 ## 🌐 Live App
 
-🔗 https://PASTE-YOUR-STREAMLIT-URL-HERE
+🔗 https://pokemon-battle-arena.streamlit.app/
 
 ---
 
