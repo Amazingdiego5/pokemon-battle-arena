@@ -2,6 +2,14 @@
 
 An interactive Pokémon combat simulator built with Streamlit using real-time data from the PokeAPI.
 
+⚠️ **Recommended:** For the best visual experience, please use the app in **Dark Theme mode**.  
+The UI styling, metallic battle button, glow effects, and overall design are optimized for Streamlit’s Dark Theme.
+
+You can enable it via:
+Menu (⋮) → Settings → Theme → Dark
+
+---
+
 This application allows users to:
 - Select two Pokémon (manual input or randomizer)
 - Apply type and class filters
