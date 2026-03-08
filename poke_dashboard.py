@@ -1,13 +1,27 @@
 # 1. SETUP & CONFIGURATION
 
 import streamlit as st
+import streamlit.components.v1 as components
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import random
 import pandas as pd
 import plotly.express as px
 import os
 import base64
+import time
+import textwrap
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+import logging
+
+# Silence verbose HTTP/connection logs that sometimes appear in Streamlit UI during heavy fetches
+for logger_name in ("urllib3", "requests", "asyncio"):
+    logging.getLogger(logger_name).setLevel(logging.WARNING)
+# Also raise Streamlit's logger threshold a bit (optional)
+logging.getLogger("streamlit").setLevel(logging.WARNING)
 
 APP_DIR = Path(__file__).resolve().parent  # folder where app.py lives
 
@@ -31,6 +45,222 @@ def load_image(filename: str):
 def img_to_base64(path: str) -> str:
     with open(path, "rb") as f:
         return base64.b64encode(f.read()).decode("utf-8")
+    
+def get_asset_b64(filename: str) -> str:
+    """Loads an image/gif from app folder/Images and returns base64 string (or '')."""
+    path = load_image(filename)
+    if not path:
+        return ""
+    try:
+        return img_to_base64(path)  # works for PNG/GIF/JPG
+    except Exception:
+        return ""
+
+import textwrap
+
+def fullscreen_loader_html(pikachu_b64: str, text: str = "Loading…", opaque: bool = False) -> str:
+    pikachu_tag = ""
+    if pikachu_b64:
+        pikachu_tag = f'<img class="loader-pika" src="data:image/gif;base64,{pikachu_b64}" alt="Loading" />'
+
+    # ✅ Opaque only when requested (cold start)
+    bg_alpha = 0.94 if opaque else 0.55   # <- tweak warm splash opacity here
+
+    html = f"""
+    <style>
+      .app-loader {{
+        position: fixed;
+        inset: 0;
+        z-index: 999999;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(0,0,0,{bg_alpha});
+        backdrop-filter: blur(6px);
+      }}
+
+      .app-loader-inner {{
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 18px;
+        text-align: center;
+        padding: 24px;
+      }}
+
+      .loader-pika {{
+        width: 220px;
+        height: auto;
+        image-rendering: pixelated;
+        filter: drop-shadow(0 18px 50px rgba(0,0,0,0.65));
+      }}
+
+      .loader-text {{
+        font-size: 2.4rem;
+        font-weight: 1000;
+        letter-spacing: 0.06em;
+        color: var(--app-text, #fff);
+      }}
+    </style>
+
+    <div class="app-loader">
+      <div class="app-loader-inner">
+        {pikachu_tag}
+        <div class="loader-text">{text}</div>
+      </div>
+    </div>
+    """
+    return textwrap.dedent(html).strip()
+
+def get_backgrounds_b64_jpg_only() -> list[str]:
+    """
+    Loads ONLY .jpg images from ./Images for the cold loader slideshow.
+    Returns a list of base64 strings (no mime prefix).
+    """
+    img_dir = APP_DIR / "Images"
+    if not img_dir.exists():
+        return []
+
+    # ONLY .jpg (and .JPG) — nothing else
+    files = [
+        p for p in img_dir.iterdir()
+        if p.is_file() and p.suffix.lower() == ".jpg"
+    ]
+
+    # Stable order (optional)
+    files = sorted(files, key=lambda p: p.name.lower())
+
+    b64s: list[str] = []
+    for p in files:
+        try:
+            b64s.append(img_to_base64(str(p)))
+        except Exception:
+            pass
+    return b64s
+
+
+def cold_slideshow_loader_html(
+    bg_b64_list: list[str],
+    footer_text: str = "Caching them all…",
+    switch_every_ms: int = 3000,
+    fade_ms: int = 1200,
+) -> str:
+    """
+    Fullscreen loader overlay (REAL fullscreen) with CSS-only slideshow.
+    Works in Streamlit because it uses st.markdown injection (no iframe),
+    and avoids JS entirely.
+    """
+
+    if not bg_b64_list:
+        pikachu_b64_fallback = get_asset_b64("pikachu-running-loading.gif")
+        return fullscreen_loader_html(pikachu_b64_fallback, text="", opaque=True)
+
+    # Build data URLs
+    urls = [f"data:image/jpeg;base64,{b}" for b in bg_b64_list]
+
+    # Randomize starting order so it doesn't always begin the same
+    start = random.randrange(len(urls))
+    urls = urls[start:] + urls[:start]
+
+    n = len(urls)
+    total_ms = max(1, n * switch_every_ms)
+
+    # Keyframes tuned for a nice crossfade
+    # Each layer fades in, stays, then fades out; offset by animation-delay
+    html_layers = []
+    for i, u in enumerate(urls):
+        delay = i * switch_every_ms
+        html_layers.append(
+            f"""<div class="cold-bg-layer" style="
+                    background-image:url('{u}');
+                    animation-delay:{delay}ms;
+                "></div>"""
+        )
+
+    footer_html = f"""
+      <div class="cold-footer">
+        <span class="cold-dots">{footer_text}</span>
+      </div>
+    """ if footer_text.strip() else ""
+
+    html = f"""
+    <style>
+      .cold-loader {{
+        position: fixed;
+        inset: 0;
+        z-index: 999999;
+        overflow: hidden;
+        background: #000;
+      }}
+
+      .cold-bg-layer {{
+        position: absolute;
+        inset: 0;
+        background-size: cover;
+        background-position: center;
+        background-repeat: no-repeat;
+        transform: scale(1.03);
+        opacity: 0;
+        animation: coldFade {total_ms}ms infinite;
+        will-change: opacity, transform;
+      }}
+
+      @keyframes coldFade {{
+        0%   {{ opacity: 0; }}
+        8%   {{ opacity: 1; }}
+        30%  {{ opacity: 1; }}
+        42%  {{ opacity: 0; }}
+        100% {{ opacity: 0; }}
+      }}
+
+      .cold-overlay {{
+        position: absolute;
+        inset: 0;
+        background:
+          radial-gradient(900px 420px at 50% 38%, rgba(0,0,0,0.10), rgba(0,0,0,0.45)),
+          linear-gradient(180deg, rgba(0,0,0,0.10), rgba(0,0,0,0.55));
+        backdrop-filter: blur(1px);
+      }}
+
+      .cold-footer {{
+        position: absolute;
+        left: 50%;
+        bottom: 42px;
+        transform: translateX(-50%);
+        font-size: 1.6rem;
+        font-weight: 1000;
+        letter-spacing: 0.05em;
+        color: #fff;
+        opacity: 0.98;
+        text-shadow: 0 12px 40px rgba(0,0,0,0.7);
+        pointer-events: none;
+        white-space: nowrap;
+      }}
+
+      .cold-dots::after {{
+        content: "";
+        display: inline-block;
+        width: 1.4em;
+        text-align: left;
+        animation: dots 1.2s steps(4, end) infinite;
+      }}
+
+      @keyframes dots {{
+        0%   {{ content: ""; }}
+        25%  {{ content: "."; }}
+        50%  {{ content: ".."; }}
+        75%  {{ content: "..."; }}
+        100% {{ content: ""; }}
+      }}
+    </style>
+
+    <div class="cold-loader">
+      {''.join(html_layers)}
+      <div class="cold-overlay"></div>
+      {footer_html}
+    </div>
+    """
+    return textwrap.dedent(html).strip()
 
 TYPE_COLORS = {
     "Normal": "#A8A878", "Fire": "#F08030", "Water": "#6890F0", "Electric": "#F8D030",
@@ -40,6 +270,24 @@ TYPE_COLORS = {
     "Steel": "#B8B8D0", "Fairy": "#EE99AC"
 }
 
+def _is_light_hex(hex_color: str) -> bool:
+    h = (hex_color or "#808080").lstrip("#")
+    if len(h) != 6:
+        return False
+    r = int(h[0:2], 16)
+    g = int(h[2:4], 16)
+    b = int(h[4:6], 16)
+    brightness = 0.299*r + 0.587*g + 0.114*b
+    return brightness > 160
+
+def type_chip_html(type_name: str) -> str:
+    """Colored chip for a Pokemon type (Fire/Water/etc) with ALWAYS white text."""
+    col = TYPE_COLORS.get(type_name, "#808080")
+    return (
+        f'<span class="micro typechip" '
+        f'style="background:{col}; color:#FFFFFF; border: 1px solid rgba(255,255,255,0.18);">'
+        f'{type_name}</span>'
+    )
 
 st.set_page_config(
     page_title="Pokémon Combat Simulator", 
@@ -49,6 +297,308 @@ st.set_page_config(
 
 st.markdown("""
 <style>
+
+/* =========================
+   GLOBAL FONT SIZE BOOST
+   ========================= */
+
+html, body, [class*="st-"], [data-testid="stAppViewContainer"]{
+  font-size: 18px !important;   /* main global size (try 18–20) */
+  line-height: 1.35 !important;
+}
+
+/* Widget labels (multiselect, selectbox, checkbox, text_input labels, etc.) */
+label, label span, div[data-testid="stWidgetLabel"] *{
+  font-size: 1.05rem !important;   /* slightly larger than base */
+  font-weight: 800 !important;
+}
+
+/* Inputs themselves (typed text + selected chips) */
+input, textarea, [data-baseweb="select"] *{
+  font-size: 1.05rem !important;
+}
+
+/* Dropdown menu options (when opened) */
+div[role="listbox"] *{
+  font-size: 1.05rem !important;
+}
+
+/* Checkbox text */
+div[data-testid="stCheckbox"] label p{
+  font-size: 1.05rem !important;
+}
+
+/* Buttons (except your custom epic battle button which already has its own size) */
+div[data-testid="stButton"] > button{
+  font-size: 1.1rem !important;
+}
+
+/* Dataframe/table text */
+div[data-testid="stDataFrame"] *{
+  font-size: 1.0rem !important;
+}
+
+/* Streamlit markdown paragraphs (your st.markdown text) */
+div[data-testid="stMarkdownContainer"] p,
+div[data-testid="stMarkdownContainer"] li{
+  font-size: 1.05rem !important;
+}
+
+/* ====== REAL CARD WRAPPER FOR STREAMLIT BLOCKS ====== */
+.card-anchor {
+  height: 0px;
+  margin: 0;
+  padding: 0;
+}
+
+/* Style the Streamlit block that comes right after the anchor */
+.card-anchor + div[data-testid="stVerticalBlockBorderWrapper"]{
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 16px;
+  padding: 14px 16px 16px 16px;
+  margin: 14px 0 16px 0;
+}
+
+/* Reduce spacing inside that card */
+.card-anchor + div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stVerticalBlock"] > div{
+  margin-bottom: 0.35rem;
+}
+
+/* Header bar inside card */
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  margin-bottom: 12px;
+}
+
+.section-header .title {
+  font-size: 1.2rem;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  color: var(--app-text);
+}
+
+/* Centered button row helper */
+.center-btn-row {
+  display: flex;
+  justify-content: center;
+  margin-top: 8px;
+}            
+
+.micro.typechip{
+  background: #444;              /* overridden inline */
+  border: none;                  /* overridden inline */
+  box-shadow: 0 6px 18px rgba(0,0,0,0.25);
+}            
+
+/* =========================
+   UPGRADED SELECT SECTION UI
+   ========================= */
+
+.select-hero {
+  border-radius: 20px;
+  padding: 18px 18px;
+  margin: 12px 0 18px 0;
+  border: 1px solid rgba(255,255,255,0.10);
+  background:
+    radial-gradient(1200px 220px at 15% 0%, rgba(124,77,255,0.18), transparent 55%),
+    radial-gradient(900px 240px at 85% 0%, rgba(255,106,106,0.16), transparent 55%),
+    rgba(255,255,255,0.03);
+  box-shadow: 0 18px 60px rgba(0,0,0,0.35);
+}
+
+.select-hero-top {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.select-title {
+  font-size: 1.8rem;
+  font-weight: 1000;
+  letter-spacing: 0.04em;
+  color: var(--app-text);
+  margin: 0;
+}
+
+.select-subtitle {
+  margin: 4px 0 0 0;
+  color: var(--app-text-soft);
+  font-size: 1.05rem;
+  font-weight: 500;
+}
+
+.select-badges {
+  display:flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.pill {
+  display:inline-flex;
+  align-items:center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(255,255,255,0.05);
+  color: var(--app-text);
+  font-weight: 900;
+  font-size: 0.95rem;
+  letter-spacing: 0.02em;
+}
+
+.pill strong { font-weight: 1000; }
+
+.pill.purple {
+  background: rgba(124,77,255,0.14);
+  border-color: rgba(124,77,255,0.30);
+}
+
+.pill.red {
+  background: rgba(255,106,106,0.12);
+  border-color: rgba(255,106,106,0.28);
+}
+
+.pill.green {
+  background: rgba(0,230,118,0.11);
+  border-color: rgba(0,230,118,0.24);
+}
+
+.select-grid-gap-fix div[data-testid="column"] > div {
+  height: 100%;
+}
+
+.fancy-card-head {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap: 12px;
+  padding: 12px 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02));
+  margin-bottom: 12px;
+}
+
+.fancy-card-head .left {
+  display:flex;
+  align-items:center;
+  gap: 10px;
+}
+
+.fancy-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-size: 1.1rem;
+  font-weight: 1000;
+  border: 1px solid rgba(255,255,255,0.16);
+  background: rgba(255,255,255,0.06);
+}
+
+.fancy-title {
+  font-size: 1.55rem;      /* was 1.15rem */
+  font-weight: 1000;
+  letter-spacing: 0.02em;
+  color: var(--app-text);
+  line-height: 1.15;
+}
+
+.fancy-hint {
+  font-size: 0.95rem;
+  font-weight: 400;
+  color: var(--app-text-soft);
+}
+
+.microchips {
+  display:flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  margin-bottom: 10px;
+}
+
+.micro {
+  display:inline-flex;
+  align-items:center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.045);
+  color: var(--app-text);
+  font-weight: 900;
+  font-size: 0.9rem;
+}
+
+.micro .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 99px;
+  background: rgba(255,255,255,0.35);
+}
+
+.micro .dot.purple { background: rgba(124,77,255,0.75); }
+.micro .dot.red    { background: rgba(255,106,106,0.75); }
+.micro .dot.green  { background: rgba(0,230,118,0.75); }
+
+.help-tip {
+  font-size: 0.95rem;
+  color: var(--app-text-soft);
+  font-weight: 600;
+  margin-top: 4px;
+}
+
+/* Make multiselect + text inputs feel more premium */
+div[data-testid="stMultiSelect"] > div,
+div[data-testid="stTextInput"] > div {
+  border-radius: 14px !important;
+}            
+
+/* ---------- TYPES + WEAKNESS ROWS (NO OVERLAP) ---------- */
+.meta-row{
+  display:flex;
+  align-items:flex-start;
+  justify-content:center;
+  gap: 12px;
+  flex-wrap: wrap;              /* badges can wrap to next line */
+  margin-top: 10px;
+  margin-bottom: 6px;
+}
+
+.meta-label{
+  font-weight: 900;
+  font-size: 1.15em;
+  color: var(--app-text);
+  white-space: nowrap;          /* keep "Types:" together */
+}
+
+.meta-badges{
+  display:flex;
+  justify-content:center;
+  gap: 10px;
+  flex-wrap: wrap;              /* wrap badges */
+  max-width: 90%;
+}
+
+.meta-row + .meta-row{
+  margin-top: 14px;             /* space between Types and Weak rows */
+}
 
 /* -------- THEME-AWARE TEXT COLORS (works in dark + light) -------- */
 :root{
@@ -95,7 +645,14 @@ st.markdown("""
     font-weight: 800;
     margin: 0 0 4px 0;
 }
-            
+
+.fancy-icon img {
+  width: 40px;
+  height: 40px;
+  image-rendering: pixelated;
+  display: block;
+}
+
 /* ---------- CARD LAYOUT ---------- */
 .card {
     background: rgba(255,255,255,0.03);
@@ -156,56 +713,135 @@ st.markdown("""
     font-size: 1.25em;
     font-weight: 900;
 }
+            
+/* Fix: prevent pills from ever looking like code blocks */
+.select-badges, .pill, .pill * {
+  font-family: inherit !important;
+  white-space: normal !important;
+  letter-spacing: 0.02em !important;
+}
 
-/* ---------- EPIC BATTLE BUTTON (CENTERED + SHINY) ---------- */
+.select-badges {
+  max-width: 520px;
+  text-align: right;
+}
 
-div[data-testid="stButton"] > button {
-  display: inline-block !important;
-  padding: 26px 70px !important;            /* size of button */
-  border-radius: 22px !important;
+/* Make sure no <pre>/<code> styling leaks into the hero */
+.select-hero pre, .select-hero code {
+  display: none !important;
+}
 
-  /* Shiny red gradient */
-  background: linear-gradient(180deg, #ff6a6a 0%, #e53935 45%, #b71c1c 100%) !important;
+/* ---------- BATTLE BUTTON (GRAPHITE METAL) ---------- */
 
-  color: #ffffff !important;
-  font-size: 2.8rem !important;             /* BIG text */
+/* Targets only your primary battle button */
+div[data-testid="stButton"] > button[kind="primary"]{
+  display: block !important;
+  margin: 18px auto 8px auto !important;
+
+  border-radius: 26px !important;
+  padding: 26px 78px !important;
+
+  font-size: 2.75rem !important;
   font-weight: 1000 !important;
-  letter-spacing: 0.08em !important;
+  letter-spacing: 0.10em !important;
+  color: rgba(255,255,255,0.92) !important;
 
-  border: 1px solid rgba(255,255,255,0.28) !important;
+  /* Metallic graphite: subtle gradient + specular top edge */
+  background:
+    radial-gradient(120px 90px at 18% 22%, rgba(255,255,255,0.16), transparent 60%),
+    radial-gradient(380px 220px at 70% 10%, rgba(124,77,255,0.10), transparent 55%),
+    linear-gradient(180deg, #3a3f48 0%, #272b33 46%, #1b1f27 100%) !important;
 
+  border: 1px solid rgba(255,255,255,0.14) !important;
+
+  /* Less glow, more depth */
   box-shadow:
-      0 18px 46px rgba(0,0,0,0.55),
-      0 0 30px rgba(255,80,80,0.35) !important;
+    0 18px 50px rgba(0,0,0,0.62),
+    inset 0 -10px 18px rgba(0,0,0,0.40) !important;
 
   position: relative !important;
   overflow: hidden !important;
-  transition: transform 0.12s ease, filter 0.12s ease !important;
+  transform: translateZ(0);
+  transition: transform 140ms ease, filter 140ms ease, box-shadow 140ms ease !important;
 }
 
-/* Shine sweep */
-div[data-testid="stButton"] > button::before{
-  content: "";
-  position: absolute;
-  top: -60%;
-  left: -40%;
+/* Thin top-edge highlight (feels like metal) */
+div[data-testid="stButton"] > button[kind="primary"]::after{
+  content:"";
+  position:absolute;
+  left: 12px;
+  right: 12px;
+  top: 6px;
+  height: 10px;                      /* bigger area */
+  border-radius: 999px;
+  background: linear-gradient(
+    180deg,
+    rgba(255,255,255,0.14),
+    rgba(255,255,255,0.00)
+  );
+  opacity: 0.2;                     /* much softer */
+  pointer-events:none;
+}
+
+/* Diagonal sheen sweep (only visible on hover) */
+div[data-testid="stButton"] > button[kind="primary"]::before{
+  content:"";
+  position:absolute;
+  top:-70%;
+  left:-65%;
   width: 55%;
-  height: 220%;
-  background: rgba(255,255,255,0.22);
+  height: 260%;
   transform: rotate(25deg);
-  filter: blur(2px);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255,255,255,0.20),
+    transparent
+  );
+  filter: blur(1px);
+  opacity: 0.0;
+  transition: opacity 160ms ease;
+  pointer-events:none;
 }
 
-/* Hover / active */
-div[data-testid="stButton"] > button:hover{
-  filter: brightness(1.12) saturate(1.10) !important;
-  transform: translateY(-3px) scale(1.015) !important;
+/* Hover: tiny lift + brighter metal + subtle cool rim */
+div[data-testid="stButton"] > button[kind="primary"]:hover{
+  filter: brightness(1.10) contrast(1.04) saturate(1.02) !important;
+  transform: translateY(-3px) scale(1.01) !important;
+
+  box-shadow:
+    0 22px 70px rgba(0,0,0,0.70),
+    0 0 0 1px rgba(124,77,255,0.22),
+    inset 0 1px 0 rgba(255,255,255,0.14),
+    inset 0 -10px 18px rgba(0,0,0,0.42) !important;
 }
 
-div[data-testid="stButton"] > button:active{
-  transform: translateY(1px) scale(0.99) !important;
+div[data-testid="stButton"] > button[kind="primary"]:hover::before{
+  opacity: 1.0;
+  animation: battleSheen 850ms ease forwards;
 }
 
+@keyframes battleSheen{
+  0%   { left:-65%; opacity:0.0; }
+  18%  { opacity:0.85; }
+  100% { left:125%; opacity:0.0; }
+}
+
+/* Active press */
+div[data-testid="stButton"] > button[kind="primary"]:active{
+  transform: translateY(1px) scale(0.995) !important;
+  filter: brightness(0.98) !important;
+}
+
+/* Focus ring: clean + premium */
+div[data-testid="stButton"] > button[kind="primary"]:focus{
+  outline: none !important;
+  box-shadow:
+    0 18px 50px rgba(0,0,0,0.62),
+    0 0 0 4px rgba(124,77,255,0.22),
+    inset 0 1px 0 rgba(255,255,255,0.12),
+    inset 0 -10px 18px rgba(0,0,0,0.40) !important;
+}
 
 /* ---------- WINNER CELEBRATION ---------- */
 .winner-card {
@@ -244,6 +880,61 @@ div[data-testid="stButton"] > button:active{
     display: block;
 }
 
+/* ---------- COMPACT DROPDOWN HEADER ROW (title + button) ---------- */
+.dropdown-head {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap: 14px;
+  padding: 12px 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02));
+  margin: 14px 0 8px 0;
+}
+
+.dropdown-left{
+  display:flex;
+  align-items:center;
+  gap: 10px;
+}
+
+.dropdown-title{
+  font-size: 1.35rem;
+  font-weight: 1000;
+  color: var(--app-text);
+  line-height: 1.15;
+}
+
+.dropdown-sub{
+  font-size: 0.95rem;
+  color: var(--app-text-soft);
+  font-weight: 500;
+}
+
+/* slightly smaller randomize button in dropdown headers */
+.dd-btn-anchor + div[data-testid="stButton"] > button{
+  padding: 10px 14px !important;
+  border-radius: 14px !important;
+  font-size: 1.0rem !important;
+}            
+
+/* Big bold labels for the manual name inputs (LEFT aligned) */
+.name-label{
+  width: 100%;
+  text-align: left;        /* <-- change from center to left */
+  font-size: 1.6rem;
+  font-weight: 1000;
+  margin: 0 0 8px 0;
+  padding-left: 2px;       /* optional: subtle alignment with input */
+  color: var(--app-text);
+}                       
+
+/* ---------- SECTION SPACERS ---------- */
+.section-spacer-sm { height: 12px; }
+.section-spacer-md { height: 20px; }
+.section-spacer-lg { height: 28px; }            
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -271,6 +962,40 @@ def render_sprite(url: str):
 
 # --- HERO HEADER (logo + centered title + subtitle) ---
 logo_path = load_image("pokeball_pixel_icon.png")
+
+if logo_path:
+    status_ball_b64 = img_to_base64(logo_path)
+    css = """
+    <style>
+      div[data-testid="stStatusWidget"] {{
+        width: 34px !important;
+        height: 34px !important;
+        border-radius: 999px !important;
+        background: url("data:image/png;base64,{B64}") center/contain no-repeat !important;
+        animation: pokeSpin 0.9s linear infinite;
+        box-shadow: 0 10px 26px rgba(0,0,0,0.45);
+        opacity: 0.95;
+      }}
+
+      div[data-testid="stStatusWidget"] * {{
+        display: none !important;
+      }}
+
+      @keyframes pokeSpin {{
+        from {{ transform: rotate(0deg); }}
+        to   {{ transform: rotate(360deg); }}
+      }}
+    </style>
+    """.format(B64=status_ball_b64)
+
+    st.markdown(css, unsafe_allow_html=True)
+
+
+# Small Pokéball for section headers
+small_ball_html = ""
+if logo_path:
+    small_b64 = img_to_base64(logo_path)
+    small_ball_html = f'<img src="data:image/png;base64,{small_b64}" alt="Pokeball" />'
 
 if logo_path:
     b64 = img_to_base64(logo_path)
@@ -342,38 +1067,122 @@ st.markdown(
 
 BASE_URL = "https://pokeapi.co/api/v2"
 
+# -------------------------
+# SHARED REQUESTS SESSION (RETRY + TIMEOUT)
+# -------------------------
+DEFAULT_TIMEOUT = 12  # seconds
+
+SESSION = requests.Session()
+_retry = Retry(
+    total=3,
+    connect=3,
+    read=3,
+    backoff_factor=0.35,
+    status_forcelist=(429, 500, 502, 503, 504),
+    allowed_methods=("GET",),
+    raise_on_status=False,
+)
+SESSION.mount("https://", HTTPAdapter(max_retries=_retry))
+
+def get_json(url: str, timeout: int = DEFAULT_TIMEOUT) -> dict:
+    """Centralized GET -> JSON with retry + timeout + safe failure."""
+    try:
+        resp = SESSION.get(url, timeout=timeout)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception:
+        return {}
+
 # 2. API FUNCTIONS
 
-@st.cache_data
+@st.cache_data(ttl=3600, show_spinner=False)
 def fetch_pokemon(name: str):
-    url = f"{BASE_URL}/pokemon/{name.lower()}"
-    try:
-        resp = requests.get(url, timeout=10)
-        resp.raise_for_status()
-        return resp.json()
-    except Exception:
-        return {}
+    url = f"{BASE_URL}/pokemon/{name.strip().lower()}"
+    return get_json(url, timeout=DEFAULT_TIMEOUT)
 
-@st.cache_data
+@st.cache_data(ttl=3600, show_spinner=False)
 def fetch_move(name: str):
-    url = f"{BASE_URL}/move/{name.lower().replace(' ', '-')}"
-    try:
-        resp = requests.get(url, timeout=10)
-        resp.raise_for_status()
-        return resp.json()
-    except Exception:
-        return {}
+    url = f"{BASE_URL}/move/{name.strip().lower().replace(' ', '-')}"
+    return get_json(url, timeout=DEFAULT_TIMEOUT)
 
-@st.cache_data
+@st.cache_data(ttl=3600, show_spinner=False)
 def fetch_type(name: str):
-    url = f"{BASE_URL}/type/{name.lower()}"
-    try:
-        resp = requests.get(url, timeout=10)
-        resp.raise_for_status()
-        return resp.json()
-    except Exception:
-        return {}
+    url = f"{BASE_URL}/type/{name.strip().lower()}"
+    return get_json(url, timeout=DEFAULT_TIMEOUT)
     
+@st.cache_data(ttl=86400, show_spinner=False)
+def fetch_all_pokemon_names():
+    url = f"{BASE_URL}/pokemon?limit=100000&offset=0"
+    data = get_json(url, timeout=20)
+    return [p["name"] for p in data.get("results", [])] if data else []
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def fetch_species_by_url(species_url: str):
+    """Fetch a pokemon-species resource using its URL (cached)."""
+    return get_json(species_url, timeout=DEFAULT_TIMEOUT)
+
+def get_default_variety_name(pokemon_data: dict) -> str:
+    """
+    Given a pokemon endpoint response, resolve the default/base variety name
+    via pokemon-species.varieties where is_default = True.
+    """
+    if not pokemon_data:
+        return ""
+
+    species = pokemon_data.get("species") or {}
+    species_url = species.get("url", "")
+    if not species_url:
+        return ""
+
+    species_data = fetch_species_by_url(species_url)
+    if not species_data:
+        return ""
+
+    for v in species_data.get("varieties", []):
+        if v.get("is_default"):
+            p = v.get("pokemon") or {}
+            return p.get("name", "")
+
+    return ""
+
+def get_damaging_moves_from_pokemon_data(pokemon_data: dict) -> list[str]:
+    """
+    Return unique damaging moves (power != None) from THIS pokemon's moves list.
+    Uses global move index so it's instant.
+    """
+    if not pokemon_data:
+        return []
+
+    move_idx = get_move_index()
+    moves = []
+
+    for m in pokemon_data.get("moves", []) or []:
+        move_name = (m.get("move") or {}).get("name", "")
+        if not move_name:
+            continue
+
+        info = move_idx.get(move_name)
+        if info and info.get("power") is not None:
+            moves.append(move_name)
+
+    return sorted(set(moves))
+
+def get_damaging_moves_with_fallback(pokemon_data: dict) -> list[str]:
+    """
+    If a form has no damaging moves, fallback to the default/base variety's moveset.
+    Example: charizard-gmax -> charizard.
+    """
+    moves = get_damaging_moves_from_pokemon_data(pokemon_data)
+    if moves:
+        return moves
+
+    base_name = get_default_variety_name(pokemon_data)
+    if not base_name:
+        return []
+
+    base_data = fetch_pokemon(base_name)
+    return get_damaging_moves_from_pokemon_data(base_data)
+
 def get_weaknesses(defender_types):
     if not defender_types:
         return {}
@@ -404,25 +1213,345 @@ def get_weaknesses(defender_types):
     weak = dict(sorted(weak.items(), key=lambda x: (-x[1], x[0])))
     return weak
 
-@st.cache_data
+@st.cache_data(show_spinner=False)
 def get_moves_with_types(pokemon_moves):
-    """Get move types for dropdown coloring (cached)"""
+    """Get move types for dropdown coloring (instant via move index)."""
+    move_idx = get_move_index()
     move_types = {}
-    for move_name in pokemon_moves:
-        move_data = fetch_move(move_name)
-        move_type = (move_data.get("type") or {}).get("name", "").capitalize()
-        move_types[move_name] = move_type
+
+    for move_name in pokemon_moves or []:
+        info = move_idx.get(move_name) or {}
+        move_types[move_name] = (info.get("type") or "")
+
     return move_types
+
+def is_gmax_form(pokemon_data: dict) -> bool:
+    """True if pokemon name ends with -gmax (e.g., gengar-gmax)."""
+    if not pokemon_data:
+        return False
+    name = (pokemon_data.get("name") or "").lower()
+    return name.endswith("-gmax")
+
+# =========================
+# FAST FILTERED RANDOMIZER (NO GLOBAL INDEX)
+# =========================
+
+TYPE_OPTIONS = list(TYPE_COLORS.keys())
+CLASS_OPTIONS = ["Legendary", "Mythical", "Baby", "Mega", "Battle-only", "Default", "Gmax"]
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def fetch_species_by_name(name: str) -> dict:
+    url = f"{BASE_URL}/pokemon-species/{name.strip().lower()}"
+    return get_json(url, timeout=DEFAULT_TIMEOUT)
+
+# =========================
+# SUPER FAST INDICES (TYPE + CLASS)
+# Streamlit Cloud friendly: cache in memory (no disk)
+# =========================
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def fetch_all_species_names() -> list[str]:
+    url = f"{BASE_URL}/pokemon-species?limit=100000&offset=0"
+    data = get_json(url, timeout=25)
+    return [s["name"] for s in data.get("results", [])] if data else []
+
+def _safe_get_json(url: str, timeout: int = 20) -> dict:
+    return get_json(url, timeout=timeout)
+
+@st.cache_resource(show_spinner=False)
+def get_class_index() -> dict:
+    """
+    Builds sets for each class so filtering is O(1) and requires NO API calls later.
+    This is the key fix for "class filters take forever".
+    """
+    species_names = fetch_all_species_names()
+
+    legendary = set()
+    mythical = set()
+    baby = set()
+    default_forms = set()
+
+    mega = set()
+    gmax = set()
+    battle_only = set()
+
+    battle_only_markers = ["-battle", "-totem", "-school", "-zen", "-mode", "-blade", "-busted", "-hangry"]
+
+    # Fetch species concurrently to reduce initial build time
+    def fetch_one_species(sname: str) -> dict:
+        return fetch_species_by_name(sname)
+
+    with ThreadPoolExecutor(max_workers=24) as ex:
+        futures = {ex.submit(fetch_one_species, s): s for s in species_names}
+        for fut in as_completed(futures):
+            sd = fut.result()
+            if not sd:
+                continue
+
+            is_leg = bool(sd.get("is_legendary", False))
+            is_myth = bool(sd.get("is_mythical", False))
+            is_baby = bool(sd.get("is_baby", False))
+
+            for v in sd.get("varieties", []) or []:
+                p = (v.get("pokemon") or {}).get("name", "")
+                if not p:
+                    continue
+
+                # species-based classes
+                if is_leg:
+                    legendary.add(p)
+                if is_myth:
+                    mythical.add(p)
+                if is_baby:
+                    baby.add(p)
+                if v.get("is_default") is True:
+                    default_forms.add(p)
+
+                # name-based classes
+                pn = p.lower()
+                if pn.endswith("-gmax"):
+                    gmax.add(p)
+                if "-mega" in pn:
+                    mega.add(p)
+                if any(m in pn for m in battle_only_markers):
+                    battle_only.add(p)
+
+    return {
+        "Legendary": legendary,
+        "Mythical": mythical,
+        "Baby": baby,
+        "Default": default_forms,
+        "Mega": mega,
+        "Gmax": gmax,
+        "Battle-only": battle_only,
+    }
+
+@st.cache_resource(show_spinner=False)
+def get_type_index() -> dict:
+    """
+    Builds sets for each type using /type/{type}.
+    After this, type filtering is also O(1) and requires NO API calls later.
+    """
+    idx = {t: set() for t in TYPE_COLORS.keys()}
+
+    def fetch_one_type(tname: str) -> dict:
+        return fetch_type(tname)
+
+    with ThreadPoolExecutor(max_workers=18) as ex:
+        futures = {ex.submit(fetch_one_type, t): t for t in TYPE_COLORS.keys()}
+        for fut in as_completed(futures):
+            tname = futures[fut]
+            td = fut.result()
+            if not td:
+                continue
+            # /type returns a list of pokemon entries
+            for entry in td.get("pokemon", []) or []:
+                p = (entry.get("pokemon") or {}).get("name", "")
+                if p:
+                    # store names in lowercase (your pokemon_names_all are lowercase)
+                    idx[tname].add(p.lower())
+
+    return idx
+
+# =========================
+# SUPER FAST MOVE INDEX (POWER / TYPE / CLASS / ACCURACY)
+# One-time warmup -> instant move filtering + move display
+# =========================
+
+@st.cache_resource(show_spinner=False)
+def get_move_index() -> dict:
+    """
+    Global move dictionary: move_name -> {power, accuracy, type, damage_class}
+    Used to filter damaging moves instantly WITHOUT fetching each move per Pokémon.
+    """
+    # Pull list of all moves
+    data = _safe_get_json(f"{BASE_URL}/move?limit=100000&offset=0", timeout=25)
+    move_names = [m["name"] for m in (data.get("results") or []) if m.get("name")]
+
+    idx: dict[str, dict] = {}
+
+    def fetch_one(mname: str):
+        md = fetch_move(mname)  # cached
+        if not md:
+            return None
+
+        return (mname, {
+            "power": md.get("power"),
+            "accuracy": md.get("accuracy"),
+            "type": ((md.get("type") or {}).get("name") or "").capitalize(),
+            "damage_class": ((md.get("damage_class") or {}).get("name") or ""),
+        })
+
+    # Moderate concurrency to avoid throttling
+    with ThreadPoolExecutor(max_workers=16) as ex:
+        for item in ex.map(fetch_one, move_names):
+            if item:
+                k, v = item
+                idx[k] = v
+
+    return idx
+
+def classify_from_species_and_name(pokemon_name: str, species_data: dict) -> dict:
+    pokemon_name = (pokemon_name or "").lower()
+
+    flags = {
+        "Legendary": bool(species_data.get("is_legendary", False)),
+        "Mythical": bool(species_data.get("is_mythical", False)),
+        "Baby": bool(species_data.get("is_baby", False)),
+        "Gmax": pokemon_name.endswith("-gmax"),
+        "Mega": ("-mega" in pokemon_name),
+        "Battle-only": False,
+        "Default": False,
+    }
+
+    varieties = species_data.get("varieties", []) if species_data else []
+
+    # Default variety match
+    for v in varieties:
+        p = (v.get("pokemon") or {}).get("name", "").lower()
+        if p == pokemon_name and v.get("is_default") is True:
+            flags["Default"] = True
+            break
+
+    # Battle-only heuristic (common patterns)
+    battle_only_markers = ["-battle", "-totem", "-school", "-zen", "-mode", "-blade", "-busted", "-hangry"]
+    if any(m in pokemon_name for m in battle_only_markers):
+        flags["Battle-only"] = True
+
+    return flags
+
+def pokemon_matches_filters(pokemon_name: str, type_filters: list[str], class_filters: list[str]) -> bool:
+    if not pokemon_name:
+        return False
+
+    name = pokemon_name.lower()
+
+    # ---- CLASS FILTERS: O(1) set membership ----
+    if class_filters:
+        class_idx = get_class_index()
+        for c in class_filters:
+            if name not in class_idx.get(c, set()):
+                return False
+
+    # ---- TYPE FILTERS: O(1) set membership ----
+    if type_filters:
+        type_idx = get_type_index()
+
+        # ✅ AND logic for types (must include ALL selected)
+        if not all(name in type_idx.get(t, set()) for t in type_filters):
+            return False
+
+    return True
+
+@st.cache_data(show_spinner=False)
+def build_pool_for_filters(all_names: list[str], type_filters: tuple, class_filters: tuple) -> list[str]:
+    tf = list(type_filters or ())
+    cf = list(class_filters or ())
+    return [n for n in all_names if pokemon_matches_filters(n, tf, cf)]
+
+def pick_random_pokemon_name(all_names: list[str], type_filters: list[str], class_filters: list[str]) -> str:
+    pool = build_pool_for_filters(all_names, tuple(type_filters or []), tuple(class_filters or []))
+    return random.choice(pool) if pool else ""
+
+# =========================
+# BOOT LOADING / WARMUP GATE (BLOCK UI UNTIL READY)
+# Cold start: show loader until EVERYTHING is loaded
+# Warm start (refresh/new session): show loader for 1s only
+# =========================
+
+import threading
+
+@st.cache_resource(show_spinner=False)
+def get_boot_state():
+    """
+    Global (server-wide) boot state that persists across sessions.
+    - ready=False means the server hasn't warmed up caches yet.
+    - We store names here too so every session can reuse instantly.
+    """
+    return {"ready": False, "names": None, "lock": threading.Lock()}
+
+def warmup_everything_global() -> list[str]:
+    """
+    Warm up ALL heavy caches that you want to be instant afterward.
+    This runs only once per server lifetime (guarded by boot_state.ready).
+    """
+    names = fetch_all_pokemon_names()
+    _ = get_type_index()
+    _ = get_class_index()
+    _ = get_move_index()   # IMPORTANT: include moves too (you want everything instant)
+    return names
+
+# --- Loader asset (keep your existing gif file) ---
+pikachu_b64 = get_asset_b64("pikachu-running-loading.gif")
+
+boot = get_boot_state()
+
+# Per-session flag: ensures the 1s splash happens only once per session (not every widget rerun)
+st.session_state.setdefault("refresh_splash_shown", False)
+
+# -------------------------
+# 1) COLD START: loader stays until ALL caches are built
+# -------------------------
+if not boot["ready"]:
+    loader = st.empty()
+
+    # 1) Instant loader first
+    loader.markdown(
+        fullscreen_loader_html(pikachu_b64, text="", opaque=True),
+        unsafe_allow_html=True
+    )
+
+    # 2) Load backgrounds
+    bg_b64s = get_backgrounds_b64_jpg_only()
+
+    # 3) Switch to slideshow (CSS-only, so it works in st.markdown)
+    loader.markdown(
+        cold_slideshow_loader_html(
+            bg_b64_list=bg_b64s,
+            footer_text="Gotta cache them all…",
+            switch_every_ms=3000,  # test fast; raise later
+            fade_ms=1200,
+        ),
+        unsafe_allow_html=True
+    )
+
+    # 4) Warm up caches
+    with boot["lock"]:
+        if not boot["ready"]:
+            boot["names"] = warmup_everything_global()
+            boot["ready"] = True
+
+    st.session_state["pokemon_names_all_cached"] = boot["names"]
+    st.session_state["refresh_splash_shown"] = True
+
+    loader.empty()
+    st.rerun()
+
+# -------------------------
+# 2) WARM START: show 1s splash ONCE per session (refresh/new session)
+# -------------------------
+if not st.session_state["refresh_splash_shown"]:
+    splash = st.empty()
+    splash.markdown(fullscreen_loader_html(pikachu_b64, "Loading…", opaque=False), unsafe_allow_html=True)
+    time.sleep(1.0)
+    splash.empty()
+    st.session_state["refresh_splash_shown"] = True
+
+# Ensure names are available for this session instantly
+if boot.get("names"):
+    st.session_state["pokemon_names_all_cached"] = boot["names"]
 
 # 3. DATA PROCESSING
 
-def extract_pokemon_basic(data: dict):
+def extract_pokemon_basic(data: dict, use_shiny: bool = False):
     if not data:
         return {}
 
     name = data.get("name", "").capitalize()
 
-    sprite = (data.get("sprites") or {}).get("front_default", "")
+    sprites = data.get("sprites") or {}
+    sprite = sprites.get("front_shiny") if use_shiny else sprites.get("front_default")
+    sprite = sprite or sprites.get("front_default") or sprites.get("front_shiny") or ""
 
     types = [t["type"]["name"].capitalize() for t in data.get("types", [])]
 
@@ -436,21 +1565,16 @@ def extract_pokemon_basic(data: dict):
         "speed": stats_map.get("speed", 0),
     }
 
-    damaging_moves = []
-    for m in data.get("moves", []):
-        move_name = m["move"]["name"]
-        move_data = fetch_move(move_name)
-        if not move_data:
-            continue
-        if move_data.get("power") is not None:
-            damaging_moves.append(move_name)
+    # Damaging moves (with fallback to base/default variety if empty)
+    damaging_moves = get_damaging_moves_with_fallback(data)
 
     return {
         "name": name,
         "sprite": sprite,
         "types": types,
         "stats": stats,
-        "damaging_moves": sorted(set(damaging_moves)),
+        "damaging_moves": damaging_moves,
+        "is_gmax": is_gmax_form(data),
     }
 
 def display_mystery_pokemon():
@@ -460,41 +1584,382 @@ def display_mystery_pokemon():
         "sprite": "",
         "types": [],
         "stats": {"hp": 0, "attack": 0, "defense": 0, "special-attack": 0, "special-defense": 0, "speed": 0},
-        "damaging_moves": []
+        "damaging_moves": [],
+        "is_gmax": False,
     }
 
-# 4. POKÉMON SELECTION
-st.markdown("<h2 style='text-align: left; margin-bottom: 20px;'>Select Pokémon</h2>", unsafe_allow_html=True)
+def render_base_stats_table(pokemon: dict):
+    """Full-width base stats table. If Gmax: HP displayed doubled and styled red+bold."""
+    is_gmax = pokemon.get("is_gmax", False)
 
-col_input1, col_input2 = st.columns(2)
+    hp_value = int(pokemon["stats"]["hp"] * (2 if is_gmax else 1))
 
-with col_input1:
-    p1_name = st.text_input("Pokémon 1 name", value="", placeholder="Type a Pokémon name...")
-with col_input2:
-    p2_name = st.text_input("Pokémon 2 name", value="", placeholder="Type a Pokémon name...")
+    df = pd.DataFrame({
+        "Stat": ["HP", "Attack", "Defense", "Special Attack", "Special Defense", "Speed"],
+        "Value": [
+            hp_value,
+            pokemon["stats"]["attack"],
+            pokemon["stats"]["defense"],
+            pokemon["stats"]["special-attack"],
+            pokemon["stats"]["special-defense"],
+            pokemon["stats"]["speed"],
+        ],
+    })
 
+    def style_row(row):
+        if is_gmax and row["Stat"] == "HP":
+            return ["", "color:#00e676; font-weight:900;"]  # vibrant green
+        return ["", ""]
 
-# Handle empty inputs with mystery Pokémon
-if not p1_name.strip():
+    styled = df.style.apply(style_row, axis=1)
+    st.dataframe(styled, use_container_width=True, hide_index=True)
+
+# --- Session state defaults (prevents Streamlit "default value + session_state" warning) ---
+st.session_state.setdefault("p1_name", "")
+st.session_state.setdefault("p2_name", "")
+st.session_state.setdefault("p1_move", "")
+st.session_state.setdefault("p2_move", "")
+st.session_state.setdefault("shiny_p1", False)
+st.session_state.setdefault("shiny_p2", False)
+
+# 4. POKÉMON SELECTION (UPGRADED UI)
+
+pokemon_names_all = st.session_state.get("pokemon_names_all_cached") or fetch_all_pokemon_names()
+
+# --- Session state defaults for filters ---
+st.session_state.setdefault("global_type_filters", [])
+st.session_state.setdefault("global_class_filters", [])
+
+st.session_state.setdefault("p1_type_filters", [])
+st.session_state.setdefault("p1_class_filters", [])
+
+st.session_state.setdefault("p2_type_filters", [])
+st.session_state.setdefault("p2_class_filters", [])
+
+# --- Session state defaults for multiselect widget keys (prevents warning) ---
+st.session_state.setdefault("global_type_filters_widget", [])
+st.session_state.setdefault("global_class_filters_widget", [])
+st.session_state.setdefault("p1_type_filters_widget", [])
+st.session_state.setdefault("p1_class_filters_widget", [])
+st.session_state.setdefault("p2_type_filters_widget", [])
+st.session_state.setdefault("p2_class_filters_widget", [])
+
+# --- Pretty header + live state pills ---
+p1_preview = (st.session_state.get("p1_name") or "").strip() or "—"
+p2_preview = (st.session_state.get("p2_name") or "").strip() or "—"
+gt = st.session_state.get("global_type_filters", [])
+gc = st.session_state.get("global_class_filters", [])
+
+hero_html = """
+<div class="select-hero">
+  <div class="select-hero-top">
+    <div>
+      <div class="select-title">Select Pokémon</div>
+      <div class="select-subtitle">Filter, randomize, and set up your match like a real arena draft.</div>
+    </div>
+
+    <div class="select-badges">
+      <div class="pill purple">👤 <strong>P1:</strong> __P1__</div>
+      <div class="pill red">👤 <strong>P2:</strong> __P2__</div>
+      <div class="pill green">🎯 <strong>Global:</strong> __GT__ types • __GC__ classes</div>
+    </div>
+  </div>
+</div>
+"""
+
+hero_html = (hero_html
+             .replace("__P1__", p1_preview)
+             .replace("__P2__", p2_preview)
+             .replace("__GT__", str(len(gt)))
+             .replace("__GC__", str(len(gc))))
+
+st.markdown(hero_html, unsafe_allow_html=True)
+
+TYPE_OPTIONS = list(TYPE_COLORS.keys())
+CLASS_OPTIONS = ["Legendary", "Mythical", "Baby", "Mega", "Battle-only", "Default", "Gmax"]
+
+# ---------- COLLAPSIBLE FILTERS / RANDOMIZERS (COMPACT) ----------
+
+st.session_state.setdefault("open_global", False)
+st.session_state.setdefault("open_p1", False)
+st.session_state.setdefault("open_p2", False)
+
+# Helper to make the compact header row
+def dropdown_header(title: str, button_label: str, button_key: str, subtitle=None):
+    subtitle_html = f'<div class="dropdown-sub">{subtitle}</div>' if subtitle else ""
+
+    html = f"""
+<div class="dropdown-head">
+  <div class="dropdown-left">
+    <div class="fancy-icon">{small_ball_html}</div>
+    <div>
+      <div class="dropdown-title">{title}</div>{subtitle_html}
+    </div>
+  </div>
+  <div class="dd-btn-anchor"></div>
+</div>
+""".strip()
+
+    st.markdown(html, unsafe_allow_html=True)
+    return st.button(button_label, key=button_key)
+
+# ---------- SINGLE DROPDOWN WRAPPER (EVERYTHING INSIDE) ----------
+with st.expander("🎲 POKÉMON RANDOMIZER", expanded=False):
+
+    # --- 1) GLOBAL: Pokémon Randomizer (header + button) ---
+    clicked_global_randomize = dropdown_header(
+        title="Pokémon Randomizer",
+        subtitle="Randomize two Pokémon instantly (filters optional).",
+        button_label="🎲 RANDOMIZE BOTH POKÉMONS",
+        button_key="dd_randomize_both",
+    )
+
+    # Button works even if inner expanders are closed (still INSIDE main dropdown)
+    if clicked_global_randomize:
+        # 🔥 CLEAR INDIVIDUAL FILTERS (P1 & P2)
+        st.session_state["p1_type_filters_widget"] = []
+        st.session_state["p1_class_filters_widget"] = []
+        st.session_state["p2_type_filters_widget"] = []
+        st.session_state["p2_class_filters_widget"] = []
+
+        st.session_state["p1_type_filters"] = []
+        st.session_state["p1_class_filters"] = []
+        st.session_state["p2_type_filters"] = []
+        st.session_state["p2_class_filters"] = []
+
+        a = pick_random_pokemon_name(
+            pokemon_names_all,
+            st.session_state.get("global_type_filters", []),
+            st.session_state.get("global_class_filters", []),
+        )
+        b = pick_random_pokemon_name(
+            pokemon_names_all,
+            st.session_state.get("global_type_filters", []),
+            st.session_state.get("global_class_filters", []),
+        )
+
+        tries = 0
+        while b and a and b == a and tries < 30:
+            b = pick_random_pokemon_name(
+                pokemon_names_all,
+                st.session_state.get("global_type_filters", []),
+                st.session_state.get("global_class_filters", []),
+            )
+            tries += 1
+
+        if not a or not b:
+            st.error("❌ No Pokémon found matching the global filters. Try loosening filters.")
+        else:
+            st.session_state["p1_name"] = a
+            st.session_state["p2_name"] = b
+
+            p1_raw_rand = fetch_pokemon(a)
+            p2_raw_rand = fetch_pokemon(b)
+
+            p1_moves = get_damaging_moves_with_fallback(p1_raw_rand)
+            p2_moves = get_damaging_moves_with_fallback(p2_raw_rand)
+
+            st.session_state["p1_move"] = random.choice(p1_moves) if p1_moves else ""
+            st.session_state["p2_move"] = random.choice(p2_moves) if p2_moves else ""
+
+    # --- Global filters expander (still inside main dropdown) ---
+    with st.expander("Open Pokémon Randomizer filters", expanded=False):
+        gcol1, gcol2 = st.columns(2)
+        with gcol1:
+            st.multiselect(
+                "Type filter (optional)",
+                options=TYPE_OPTIONS,
+                key="global_type_filters_widget",
+            )
+            st.session_state["global_type_filters"] = st.session_state["global_type_filters_widget"]
+
+        with gcol2:
+            st.multiselect(
+                "Class filter (optional)",
+                options=CLASS_OPTIONS,
+                key="global_class_filters_widget",
+            )
+            st.session_state["global_class_filters"] = st.session_state["global_class_filters_widget"]
+
+        chips = []
+        for t in st.session_state["global_type_filters"]:
+            chips.append(type_chip_html(t))
+        for c in st.session_state["global_class_filters"]:
+            chips.append(f'<span class="micro"><span class="dot purple"></span>{c}</span>')
+
+        st.markdown(
+            f"""
+            <div class="microchips">
+              {("".join(chips) if chips else '<span class="micro"><span class="dot"></span>No global filters selected</span>')}
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    # --- 2) P1 & P2 cards (still inside main dropdown) ---
+    col_left, col_right = st.columns(2, gap="large")
+
+    with col_left:
+        clicked_p1_randomize = dropdown_header(
+            title="Pokémon 1 Filters",
+            button_label="🎲 RANDOMIZE POKÉMON 1",
+            button_key="dd_rand_p1",
+        )
+
+        if clicked_p1_randomize:
+            a = pick_random_pokemon_name(
+                pokemon_names_all,
+                st.session_state.get("p1_type_filters", []),
+                st.session_state.get("p1_class_filters", []),
+            )
+            if not a:
+                st.error("❌ No Pokémon found for Pokémon 1 filters. Try loosening filters.")
+            else:
+                st.session_state["p1_name"] = a
+                p1_raw_rand = fetch_pokemon(a)
+                p1_moves = get_damaging_moves_with_fallback(p1_raw_rand)
+                st.session_state["p1_move"] = random.choice(p1_moves) if p1_moves else ""
+
+        with st.expander("Open Pokémon 1 filters", expanded=False):
+            st.checkbox(
+                "✨ Shiny (Pokémon 1)",
+                value=st.session_state.get("shiny_p1", False),
+                key="shiny_p1"
+            )
+
+            st.multiselect(
+                "Type filter (optional)",
+                options=TYPE_OPTIONS,
+                key="p1_type_filters_widget",
+            )
+            st.session_state["p1_type_filters"] = st.session_state["p1_type_filters_widget"]
+
+            st.multiselect(
+                "Class filter (optional)",
+                options=CLASS_OPTIONS,
+                key="p1_class_filters_widget",
+            )
+            st.session_state["p1_class_filters"] = st.session_state["p1_class_filters_widget"]
+
+            chips = []
+            for t in st.session_state["p1_type_filters"]:
+                chips.append(type_chip_html(t))
+            for c in st.session_state["p1_class_filters"]:
+                chips.append(f'<span class="micro"><span class="dot purple"></span>{c}</span>')
+
+            st.markdown(
+                f"""
+                <div class="microchips">
+                  {("".join(chips) if chips else '<span class="micro"><span class="dot"></span>No filters selected</span>')}
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+    with col_right:
+        clicked_p2_randomize = dropdown_header(
+            title="Pokémon 2 Filters",
+            button_label="🎲 RANDOMIZE POKÉMON 2",
+            button_key="dd_rand_p2",
+        )
+
+        if clicked_p2_randomize:
+            b = pick_random_pokemon_name(
+                pokemon_names_all,
+                st.session_state.get("p2_type_filters", []),
+                st.session_state.get("p2_class_filters", []),
+            )
+            if not b:
+                st.error("❌ No Pokémon found for Pokémon 2 filters. Try loosening filters.")
+            else:
+                st.session_state["p2_name"] = b
+                p2_raw_rand = fetch_pokemon(b)
+                p2_moves = get_damaging_moves_with_fallback(p2_raw_rand)
+                st.session_state["p2_move"] = random.choice(p2_moves) if p2_moves else ""
+
+        with st.expander("Open Pokémon 2 filters", expanded=False):
+            st.checkbox(
+                "✨ Shiny (Pokémon 2)",
+                value=st.session_state.get("shiny_p2", False),
+                key="shiny_p2"
+            )
+
+            st.multiselect(
+                "Type filter (optional)",
+                options=TYPE_OPTIONS,
+                key="p2_type_filters_widget",
+            )
+            st.session_state["p2_type_filters"] = st.session_state["p2_type_filters_widget"]
+
+            st.multiselect(
+                "Class filter (optional)",
+                options=CLASS_OPTIONS,
+                key="p2_class_filters_widget",
+            )
+            st.session_state["p2_class_filters"] = st.session_state["p2_class_filters_widget"]
+
+            chips = []
+            for t in st.session_state["p2_type_filters"]:
+                chips.append(type_chip_html(t))
+            for c in st.session_state["p2_class_filters"]:
+                chips.append(f'<span class="micro"><span class="dot purple"></span>{c}</span>')
+
+            st.markdown(
+                f"""
+                <div class="microchips">
+                  {("".join(chips) if chips else '<span class="micro"><span class="dot"></span>No filters selected</span>')}
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+st.markdown("<div class='section-spacer-lg'></div>", unsafe_allow_html=True)
+
+# ---------- MANUAL POKÉMON INPUTS (OUTSIDE MAIN DROPDOWN) ----------
+manual_left, manual_right = st.columns(2, gap="large")
+
+with manual_left:
+    st.markdown('<div class="name-label">Pokémon 1 Name</div>', unsafe_allow_html=True)
+    st.text_input(
+        label="",
+        placeholder="Type a Pokémon name...",
+        key="p1_name",
+        label_visibility="collapsed",
+    )
+
+with manual_right:
+    st.markdown('<div class="name-label">Pokémon 2 Name</div>', unsafe_allow_html=True)
+    st.text_input(
+        label="",
+        placeholder="Type a Pokémon name...",
+        key="p2_name",
+        label_visibility="collapsed",
+    )
+
+# Always safe even if dropdown stayed closed
+use_shiny_p1 = st.session_state.get("shiny_p1", False)
+use_shiny_p2 = st.session_state.get("shiny_p2", False)
+
+# ---------- FETCH POKÉMON AFTER INPUTS ----------
+if not st.session_state.get("p1_name", "").strip():
     p1 = display_mystery_pokemon()
 else:
-    p1_raw = fetch_pokemon(p1_name.strip())
+    p1_raw = fetch_pokemon(st.session_state["p1_name"].strip())
     if not p1_raw:
-        st.error(f"❌ Pokémon 1 not found: '{p1_name}'")
+        st.error(f"❌ Pokémon 1 not found: '{st.session_state['p1_name']}'")
         p1 = display_mystery_pokemon()
     else:
-        p1 = extract_pokemon_basic(p1_raw)
+        p1 = extract_pokemon_basic(p1_raw, use_shiny=use_shiny_p1)
 
-if not p2_name.strip():
+if not st.session_state.get("p2_name", "").strip():
     p2 = display_mystery_pokemon()
 else:
-    p2_raw = fetch_pokemon(p2_name.strip())
+    p2_raw = fetch_pokemon(st.session_state["p2_name"].strip())
     if not p2_raw:
-        st.error(f"❌ Pokémon 2 not found: '{p2_name}'")
+        st.error(f"❌ Pokémon 2 not found: '{st.session_state['p2_name']}'")
         p2 = display_mystery_pokemon()
     else:
-        p2 = extract_pokemon_basic(p2_raw)
-
+        p2 = extract_pokemon_basic(p2_raw, use_shiny=use_shiny_p2)
 
 
 # 5. POKÉMON DISPLAY & MOVE SELECTION
@@ -503,7 +1968,8 @@ col1, col2 = st.columns(2)
 
 with col1:
     if p1["name"]:
-        st.markdown(f"<div class='poke-name'>{p1['name']}</div>", unsafe_allow_html=True)
+        p1_badge = " ✨" if (p1.get("name") and use_shiny_p1) else ""
+        st.markdown(f"<div class='poke-name'>{p1['name']}{p1_badge}</div>", unsafe_allow_html=True)
     
     render_sprite(p1["sprite"])
     
@@ -514,12 +1980,6 @@ with col1:
         for t in p1["types"]
     ])
 
-    st.markdown(f"""
-    <div style='text-align: center; font-weight: bold; font-size: 1.2em; color: var(--app-text);'>
-        Types: {type_badges_p1 or 'Unknown'}
-    </div>
-    """, unsafe_allow_html=True)
-
     # Weaknesses (types that deal >1x damage to this Pokémon)
     weak1 = get_weaknesses(p1["types"])
 
@@ -529,27 +1989,24 @@ with col1:
         for t, mult in weak1.items()
     ])
 
-    st.markdown(f"""
-    <div style='text-align: center; font-weight: bold; font-size: 1.15em; color: var(--app-text); margin-top: 10px;'>
-        Weak against: {weak_badges_p1 if weak_badges_p1 else '—'}
-    </div>
-    """, unsafe_allow_html=True)
+    # ✅ NEW: Types + Weak against (no overlap, wraps cleanly)
+    st.markdown(
+        f"""
+        <div class="meta-row">
+        <div class="meta-label">Types:</div>
+        <div class="meta-badges">{type_badges_p1 or 'Unknown'}</div>
+        </div>
+
+        <div class="meta-row">
+        <div class="meta-label">Weak against:</div>
+        <div class="meta-badges">{weak_badges_p1 if weak_badges_p1 else '—'}</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
     st.markdown("<div class='card'><div class='card-title'>Base Stats</div>", unsafe_allow_html=True)
-
-    stats_df1 = pd.DataFrame({
-        "Stat": ["HP","Attack","Defense","Special Attack","Special Defense","Speed"],
-        "Value": [
-            p1["stats"]["hp"],
-            p1["stats"]["attack"],
-            p1["stats"]["defense"],
-            p1["stats"]["special-attack"],
-            p1["stats"]["special-defense"],
-            p1["stats"]["speed"],
-        ],
-    })
-    st.dataframe(stats_df1, use_container_width=True, hide_index=True)
-
+    render_base_stats_table(p1)
     st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("<div class='card'><div class='card-title'>Move Selection</div>", unsafe_allow_html=True)
@@ -580,7 +2037,8 @@ with col1:
 
 with col2:
     if p2["name"]:
-        st.markdown(f"<div class='poke-name'>{p2['name']}</div>", unsafe_allow_html=True)
+        p2_badge = " ✨" if (p2.get("name") and use_shiny_p2) else ""
+        st.markdown(f"<div class='poke-name'>{p2['name']}{p2_badge}</div>", unsafe_allow_html=True)
     
     render_sprite(p2["sprite"])
     
@@ -591,12 +2049,6 @@ with col2:
         for t in p2["types"]
     ])
 
-    st.markdown(f"""
-    <div style='text-align: center; font-weight: bold; font-size: 1.2em; color: var(--app-text);'>
-        Types: {type_badges_p2 or 'Unknown'}
-    </div>
-    """, unsafe_allow_html=True)
-
     # Weaknesses (types that deal >1x damage to this Pokémon)
     weak2 = get_weaknesses(p2["types"])
 
@@ -606,27 +2058,24 @@ with col2:
         for t, mult in weak2.items()
     ])
 
-    st.markdown(f"""
-    <div style='text-align: center; font-weight: bold; font-size: 1.15em; color: var(--app-text); margin-top: 10px;'>
-        Weak against: {weak_badges_p2 if weak_badges_p2 else '—'}
-    </div>
-    """, unsafe_allow_html=True)
+    # ✅ NEW: Types + Weak against (no overlap, wraps cleanly)
+    st.markdown(
+        f"""
+        <div class="meta-row">
+        <div class="meta-label">Types:</div>
+        <div class="meta-badges">{type_badges_p2 or 'Unknown'}</div>
+        </div>
+
+        <div class="meta-row">
+        <div class="meta-label">Weak against:</div>
+        <div class="meta-badges">{weak_badges_p2 if weak_badges_p2 else '—'}</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
     st.markdown("<div class='card'><div class='card-title'>Base Stats</div>", unsafe_allow_html=True)
-
-    stats_df2 = pd.DataFrame({
-        "Stat": ["HP","Attack","Defense","Special Attack","Special Defense","Speed"],
-        "Value": [
-            p2["stats"]["hp"],
-            p2["stats"]["attack"],
-            p2["stats"]["defense"],
-            p2["stats"]["special-attack"],
-            p2["stats"]["special-defense"],
-            p2["stats"]["speed"],
-        ],
-    })
-    st.dataframe(stats_df2, use_container_width=True, hide_index=True)
-
+    render_base_stats_table(p2)
     st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("<div class='card'><div class='card-title'>Move Selection</div>", unsafe_allow_html=True)
@@ -658,15 +2107,17 @@ with col2:
 def get_move_summary(move_name: str):
     if not move_name:
         return {}
-    data = fetch_move(move_name)
-    if not data:
+
+    info = get_move_index().get(move_name)
+    if not info:
         return {}
+
     return {
-        "name": data.get("name", "").replace("-", " ").title(),
-        "power": data.get("power"),
-        "accuracy": data.get("accuracy"),
-        "type": (data.get("type") or {}).get("name", "").capitalize(),
-        "damage_class": (data.get("damage_class") or {}).get("name", ""),
+        "name": move_name.replace("-", " ").title(),
+        "power": info.get("power"),
+        "accuracy": info.get("accuracy"),
+        "type": info.get("type") or "",
+        "damage_class": info.get("damage_class") or "",
     }
 
 def accuracy_color(acc):
@@ -833,10 +2284,14 @@ st.markdown("</div>", unsafe_allow_html=True)
 # 6. STAT COMPARISON CHART
 
 def build_stat_comparison_df(p1, p2):
+    def hp_for_chart(p):
+        base_hp = p["stats"]["hp"]
+        return int(base_hp * (2 if p.get("is_gmax") else 1))
+
     raw = pd.DataFrame([
         {
             "pokemon": p1["name"],
-            "hp": p1["stats"]["hp"],
+            "hp": hp_for_chart(p1),
             "attack": p1["stats"]["attack"],
             "defense": p1["stats"]["defense"],
             "special-attack": p1["stats"]["special-attack"],
@@ -845,7 +2300,7 @@ def build_stat_comparison_df(p1, p2):
         },
         {
             "pokemon": p2["name"],
-            "hp": p2["stats"]["hp"],
+            "hp": hp_for_chart(p2),
             "attack": p2["stats"]["attack"],
             "defense": p2["stats"]["defense"],
             "special-attack": p2["stats"]["special-attack"],
@@ -966,7 +2421,7 @@ def compute_damage(attacker, defender, move_info):
     if power is None:
         power = 0
 
-    # Accuracy: if None, treat as 100 (many moves have None)
+    # Accuracy: if None, treat as 100
     accuracy = move_info.get("accuracy")
     if accuracy is None:
         accuracy = 100
@@ -974,8 +2429,9 @@ def compute_damage(attacker, defender, move_info):
     move_type = move_info.get("type", "")
     damage_class = move_info.get("damage_class", "physical")
 
-    # Accuracy check
-    if random.random() > (accuracy / 100.0):
+    # Accuracy check (use randint for more intuitive probability)
+    if random.randint(1, 100) > int(accuracy):
+        # miss
         return 0, 1.0, False, 1.0, 1.0
 
     atk_stat, def_stat = choose_offensive_stats(
@@ -984,19 +2440,25 @@ def compute_damage(attacker, defender, move_info):
 
     eff = compute_type_effectiveness(move_type, defender["types"])
 
+    # If immune, do 0 damage
+    if eff == 0.0:
+        return 0, eff, True, 1.0, 1.0
+
     base = ((2 * LEVEL / 5 + 2) * power * atk_stat / max(def_stat, 1)) / 50 + 2
     stab = stab_multiplier(move_type, attacker.get("types", []))
     roll = random_multiplier()
 
     dmg = int(base * eff * stab * roll)
-    if dmg < 0:
-        dmg = 0
+
+    # Clamp: if the move hits and it's not immune, damage should be at least 1
+    dmg = max(1, dmg)
 
     return dmg, eff, True, stab, roll
 
 def simulate_battle(p1, p2, move1_info, move2_info):
-    hp1 = p1["stats"]["hp"]
-    hp2 = p2["stats"]["hp"]
+    # Gmax HP rule: double HP in battle
+    hp1 = int(p1["stats"]["hp"] * (2 if p1.get("is_gmax") else 1))
+    hp2 = int(p2["stats"]["hp"] * (2 if p2.get("is_gmax") else 1))
     speed1 = p1["stats"]["speed"]
     speed2 = p2["stats"]["speed"]
 
@@ -1047,14 +2509,16 @@ def simulate_battle(p1, p2, move1_info, move2_info):
             battle_log.append({
                 "round": rnd,
                 "attacker": attacker["name"],
-                "move": move_info.get("name", "Unknown Move"),
-                "damage": dmg if hit else 0,
-                "effectiveness": eff,
-                "stab": stab,
-                "roll": round(roll, 3),
-                "note": note,
                 "defender": defender["name"],
-                "defender_hp_after": defender_hp_after,
+                "move": move_info.get("name", "Unknown Move"),
+                "hit": hit,
+                "damage": int(dmg) if hit else 0,
+                "type_effectiveness": float(eff),
+                "stab": float(stab),
+                "random_roll": round(float(roll), 3),
+                "total_multiplier": round(float(eff * stab * roll), 3) if hit else 0.0,
+                "note": note,
+                "defender_hp_after": int(defender_hp_after),
             })
 
             if hp1 <= 0 or hp2 <= 0:
@@ -1079,13 +2543,24 @@ def simulate_battle(p1, p2, move1_info, move2_info):
 
 # 8. COMBAT SIMULATION UI
 
-st.markdown("<div class='card'><div class='card-title'>Combat Simulation</div>", unsafe_allow_html=True)
-
 st.markdown(
-    "<div style='text-align: center; margin: 25px 0 10px 0;'>",
-    unsafe_allow_html=True,
+    """
+    <div class="select-hero">
+      <div class="select-hero-top">
+        <div>
+          <div class="select-title">Combat Simulation</div>
+          <div class="select-subtitle">
+            Simulate a turn-based battle using real stats, type effectiveness, STAB, and damage rolls.
+          </div>
+        </div>
+      </div>
+    """,
+    unsafe_allow_html=True
 )
-battle_button = st.button("⚔️ BATTLE! ⚔️", key="battle_btn")
+
+## --- BATTLE BUTTON (styled via wrapper + CSS) ---
+st.markdown("<div class='battle-wrap'>", unsafe_allow_html=True)
+battle_button = st.button("⚔️ BATTLE! ⚔️", key="battle_btn", type="primary")
 st.markdown("</div>", unsafe_allow_html=True)
 
 if battle_button:
