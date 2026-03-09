@@ -1,5 +1,17 @@
 # 🏟️ Pokémon Battle Arena
 
+⚠️ **Recommended Settings for the Best Experience**
+
+For optimal visuals and layout:
+
+• Click the **( ⋮ )** in the top-right corner of the Streamlit app  
+• Select **Settings**  
+• Change **Theme → Dark**  
+
+Additionally, we recommend using a **70–80% browser zoom level** for the best dashboard proportions and layout balance.
+
+---
+
 An interactive Pokémon combat simulator built with Streamlit using real-time data from the PokeAPI.
 
 This application allows users to:
@@ -233,34 +245,34 @@ Only .jpg files are used for the slideshow.
 This project was developed collaboratively by five team members with equal contribution across design, implementation, testing, and documentation.
 
 ### Diego Gaitán
-- Dashboard layout and UI structure
-- Plotly visualizations (stat comparison & HP chart)
-- Battle log formatting and result display
-- Winner celebration UI
+- Dashboard layout and UI structure  
+- Plotly visualizations (stat comparison & HP chart)  
+- Battle log formatting and result display  
+- Winner celebration UI  
 
 ### Juan José Rincón
-- API integration (Pokémon, Move, Type endpoints)
-- Retry-enabled HTTP session implementation
-- Data extraction helpers and error handling logic
-- Battle damage formula implementation
+- API integration (Pokémon, Move, Type endpoints)  
+- Retry-enabled HTTP session implementation  
+- Data extraction helpers and error handling logic  
+- Battle damage formula implementation  
 
 ### Luka Tcheisvili
-- Performance optimization and caching architecture
-- Global type, class, and move indices
-- Boot warmup gate (cold vs warm start logic)
-- Concurrency implementation with ThreadPoolExecutor
+- Performance optimization and caching architecture  
+- Global type, class, and move indices  
+- Boot warmup gate (cold vs warm start logic)  
+- Concurrency implementation with ThreadPoolExecutor  
 
 ### Cecile Tambey
-- Pokémon selection system (filters, randomizers, quick reset)
-- Session state management
-- Move filtering and fallback logic
-- Edge case handling (invalid names, empty filters)
+- Pokémon selection system (filters, randomizers, quick reset)  
+- Session state management  
+- Move filtering and fallback logic  
+- Edge case handling (invalid names, empty filters)  
 
 ### Romain Gelin
-- CSS styling and interface design
-- Loader system (fullscreen + slideshow)
-- Custom battle and quick action buttons
-- README documentation and deployment setup
+- CSS styling and interface design  
+- Loader system (fullscreen + slideshow)  
+- Custom battle and quick action buttons  
+- README documentation and deployment setup  
 
 All members participated in:
 - Feature planning and architecture decisions  
