@@ -1,5 +1,9 @@
 # 🏟️ Pokémon Battle Arena
 
+<p align="center">
+  <img src="Images/pokemon-battle-arena-cover.png" alt="Pokémon Battle Arena Cover" width="1000">
+</p>
+
 ⚠️ **Recommended Settings for the Best Experience**
 
 For optimal visuals and layout:
