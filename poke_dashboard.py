@@ -292,6 +292,309 @@ st.set_page_config(
 
 st.markdown("""
 <style>
+
+/* =========================
+   GLOBAL FONT SIZE BOOST
+   ========================= */
+
+html, body, [class*="st-"], [data-testid="stAppViewContainer"]{
+  font-size: 18px !important;   /* main global size (try 18–20) */
+  line-height: 1.35 !important;
+}
+
+/* Widget labels (multiselect, selectbox, checkbox, text_input labels, etc.) */
+label, label span, div[data-testid="stWidgetLabel"] *{
+  font-size: 1.05rem !important;   /* slightly larger than base */
+  font-weight: 800 !important;
+}
+
+/* Inputs themselves (typed text + selected chips) */
+input, textarea, [data-baseweb="select"] *{
+  font-size: 1.05rem !important;
+}
+
+/* Dropdown menu options (when opened) */
+div[role="listbox"] *{
+  font-size: 1.05rem !important;
+}
+
+/* Checkbox text */
+div[data-testid="stCheckbox"] label p{
+  font-size: 1.05rem !important;
+}
+
+/* Buttons (except your custom epic battle button which already has its own size) */
+div[data-testid="stButton"] > button{
+  font-size: 1.1rem !important;
+}
+
+/* Dataframe/table text */
+div[data-testid="stDataFrame"] *{
+  font-size: 1.0rem !important;
+}
+
+/* Streamlit markdown paragraphs (your st.markdown text) */
+div[data-testid="stMarkdownContainer"] p,
+div[data-testid="stMarkdownContainer"] li{
+  font-size: 1.05rem !important;
+}
+
+/* ====== REAL CARD WRAPPER FOR STREAMLIT BLOCKS ====== */
+.card-anchor {
+  height: 0px;
+  margin: 0;
+  padding: 0;
+}
+
+/* Style the Streamlit block that comes right after the anchor */
+.card-anchor + div[data-testid="stVerticalBlockBorderWrapper"]{
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 16px;
+  padding: 14px 16px 16px 16px;
+  margin: 14px 0 16px 0;
+}
+
+/* Reduce spacing inside that card */
+.card-anchor + div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stVerticalBlock"] > div{
+  margin-bottom: 0.35rem;
+}
+
+/* Header bar inside card */
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  margin-bottom: 12px;
+}
+
+.section-header .title {
+  font-size: 1.2rem;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  color: var(--app-text);
+}
+
+/* Centered button row helper */
+.center-btn-row {
+  display: flex;
+  justify-content: center;
+  margin-top: 8px;
+}            
+
+.micro.typechip{
+  background: #444;              /* overridden inline */
+  border: none;                  /* overridden inline */
+  box-shadow: 0 6px 18px rgba(0,0,0,0.25);
+}            
+
+/* =========================
+   UPGRADED SELECT SECTION UI
+   ========================= */
+
+.select-hero {
+  border-radius: 20px;
+  padding: 18px 18px;
+  margin: 12px 0 18px 0;
+  border: 1px solid rgba(255,255,255,0.10);
+  background:
+    radial-gradient(1200px 220px at 15% 0%, rgba(124,77,255,0.18), transparent 55%),
+    radial-gradient(900px 240px at 85% 0%, rgba(255,106,106,0.16), transparent 55%),
+    rgba(255,255,255,0.03);
+  box-shadow: 0 18px 60px rgba(0,0,0,0.35);
+}
+
+.select-hero-top {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.select-title {
+  font-size: 1.8rem;
+  font-weight: 1000;
+  letter-spacing: 0.04em;
+  color: var(--app-text);
+  margin: 0;
+}
+
+.select-subtitle {
+  margin: 4px 0 0 0;
+  color: var(--app-text-soft);
+  font-size: 1.05rem;
+  font-weight: 500;
+}
+
+.select-badges {
+  display:flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.pill {
+  display:inline-flex;
+  align-items:center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(255,255,255,0.05);
+  color: var(--app-text);
+  font-weight: 900;
+  font-size: 0.95rem;
+  letter-spacing: 0.02em;
+}
+
+.pill strong { font-weight: 1000; }
+
+.pill.purple {
+  background: rgba(124,77,255,0.14);
+  border-color: rgba(124,77,255,0.30);
+}
+
+.pill.red {
+  background: rgba(255,106,106,0.12);
+  border-color: rgba(255,106,106,0.28);
+}
+
+.pill.green {
+  background: rgba(0,230,118,0.11);
+  border-color: rgba(0,230,118,0.24);
+}
+
+.select-grid-gap-fix div[data-testid="column"] > div {
+  height: 100%;
+}
+
+.fancy-card-head {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap: 12px;
+  padding: 12px 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02));
+  margin-bottom: 12px;
+}
+
+.fancy-card-head .left {
+  display:flex;
+  align-items:center;
+  gap: 10px;
+}
+
+.fancy-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-size: 1.1rem;
+  font-weight: 1000;
+  border: 1px solid rgba(255,255,255,0.16);
+  background: rgba(255,255,255,0.06);
+}
+
+.fancy-title {
+  font-size: 1.55rem;      /* was 1.15rem */
+  font-weight: 1000;
+  letter-spacing: 0.02em;
+  color: var(--app-text);
+  line-height: 1.15;
+}
+
+.fancy-hint {
+  font-size: 0.95rem;
+  font-weight: 400;
+  color: var(--app-text-soft);
+}
+
+.microchips {
+  display:flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  margin-bottom: 10px;
+}
+
+.micro {
+  display:inline-flex;
+  align-items:center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.045);
+  color: var(--app-text);
+  font-weight: 900;
+  font-size: 0.9rem;
+}
+
+.micro .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 99px;
+  background: rgba(255,255,255,0.35);
+}
+
+.micro .dot.purple { background: rgba(124,77,255,0.75); }
+.micro .dot.red    { background: rgba(255,106,106,0.75); }
+.micro .dot.green  { background: rgba(0,230,118,0.75); }
+
+.help-tip {
+  font-size: 0.95rem;
+  color: var(--app-text-soft);
+  font-weight: 600;
+  margin-top: 4px;
+}
+
+/* Make multiselect + text inputs feel more premium */
+div[data-testid="stMultiSelect"] > div,
+div[data-testid="stTextInput"] > div {
+  border-radius: 14px !important;
+}            
+
+/* ---------- TYPES + WEAKNESS ROWS (NO OVERLAP) ---------- */
+.meta-row{
+  display:flex;
+  align-items:flex-start;
+  justify-content:center;
+  gap: 12px;
+  flex-wrap: wrap;              /* badges can wrap to next line */
+  margin-top: 10px;
+  margin-bottom: 6px;
+}
+
+.meta-label{
+  font-weight: 900;
+  font-size: 1.15em;
+  color: var(--app-text);
+  white-space: nowrap;          /* keep "Types:" together */
+}
+
+.meta-badges{
+  display:flex;
+  justify-content:center;
+  gap: 10px;
+  flex-wrap: wrap;              /* wrap badges */
+  max-width: 90%;
+}
+
+.meta-row + .meta-row{
+  margin-top: 14px;             /* space between Types and Weak rows */
+}
+
 /* -------- THEME-AWARE TEXT COLORS (works in dark + light) -------- */
 :root{
   --app-text: var(--text-color);
@@ -305,41 +608,195 @@ st.markdown("""
   }
 }            
 
-/* Pixel rendering for sprites */
+/* Reserve vertical space so scaled sprites do NOT overlap other elements */
+.sprite-wrap {
+    text-align: center;
+    height: 420px;          /* <<< IMPORTANT: reserve space */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 10px 0 0 0;
+}
+
 .pokemon-sprite {
     image-rendering: pixelated;
-    transform: scale(4);
+    transform: scale(4);    /* <<< sprite size */
     transform-origin: center;
     display: block;
 }
 
-.sprite-wrap {
-    text-align: center;
-    height: 420px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+.sprite-placeholder {
+    font-size: 5em;          /* <<< size of the ??? */
+    font-weight: 900;
+    color: rgba(255,255,255,0.85);
+    letter-spacing: 0.08em;
+    line-height: 1;
 }
-
+            
 .poke-name {
     text-align: center;
+    color: var(--app-text);
     font-size: 3em;
     font-weight: 800;
+    margin: 0 0 4px 0;
 }
 
-/* Custom Metal Button Styling */
-div[data-testid="stButton"] > button[kind="primary"] {
-  border-radius: 20px !important;
-  background: linear-gradient(180deg, #444 0%, #222 100%) !important;
-  color: white !important;
-  font-weight: 900 !important;
-  border: 1px solid rgba(255,255,255,0.1) !important;
+.fancy-icon img {
+  width: 40px;
+  height: 40px;
+  image-rendering: pixelated;
+  display: block;
 }
 
-.winner-sprite {
-    image-rendering: pixelated;
-    transform: scale(3.4);
-    transform-origin: center;
+/* ---------- CARD LAYOUT ---------- */
+.card {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 14px;
+    padding: 20px 20px 16px 20px;
+    margin: 18px 0;
+}
+
+.card-title {
+    font-size: 1.8em;
+    font-weight: 800;
+    margin-bottom: 0px;
+    padding-bottom: 0px;
+}
+            
+/* ---------- MOVE DETAILS ---------- */
+.move-box {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.10);
+    border-radius: 16px;
+    padding: 22px 24px;
+    margin-top: 10px;
+    min-height: 200px;
+}
+
+.move-subtitle {
+    font-size: 1.1em;
+    font-weight: 800;
+    color: var(--app-text-soft);
+    margin-bottom: 10px;
+}
+
+.move-name {
+    font-size: 1.8em;
+    font-weight: 900;
+    margin-bottom: 14px;
+}
+
+.move-row {
+    font-size: 1.15em;
+    line-height: 1.8;
+    margin: 4px 0;
+}
+
+.badge {
+    display: inline-block;
+    padding: 6px 12px;
+    border-radius: 999px;
+    font-weight: 800;
+    font-size: 0.95em;
+    margin-left: 10px;
+    border: 1px solid rgba(255,255,255,0.12);
+    background: rgba(255,255,255,0.06);
+}
+
+.acc-big {
+    font-size: 1.25em;
+    font-weight: 900;
+}
+            
+/* Fix: prevent pills from ever looking like code blocks */
+.select-badges, .pill, .pill * {
+  font-family: inherit !important;
+  white-space: normal !important;
+  letter-spacing: 0.02em !important;
+}
+
+.select-badges {
+  max-width: 520px;
+  text-align: right;
+}
+
+/* Make sure no <pre>/<code> styling leaks into the hero */
+.select-hero pre, .select-hero code {
+  display: none !important;
+}
+
+/* ---------- BATTLE BUTTON (GRAPHITE METAL) ---------- */
+
+/* Targets only your primary battle button */
+div[data-testid="stButton"] > button[kind="primary"]{
+  display: block !important;
+  margin: 18px auto 8px auto !important;
+
+  border-radius: 26px !important;
+  padding: 26px 78px !important;
+
+  font-size: 2.75rem !important;
+  font-weight: 1000 !important;
+  letter-spacing: 0.10em !important;
+  color: rgba(255,255,255,0.92) !important;
+
+  /* Metallic graphite: subtle gradient + specular top edge */
+  background:
+    radial-gradient(120px 90px at 18% 22%, rgba(255,255,255,0.16), transparent 60%),
+    radial-gradient(380px 220px at 70% 10%, rgba(124,77,255,0.10), transparent 55%),
+    linear-gradient(180deg, #3a3f48 0%, #272b33 46%, #1b1f27 100%) !important;
+
+  border: 1px solid rgba(255,255,255,0.14) !important;
+
+  /* Less glow, more depth */
+  box-shadow:
+    0 18px 50px rgba(0,0,0,0.62),
+    inset 0 -10px 18px rgba(0,0,0,0.40) !important;
+
+  position: relative !important;
+  overflow: hidden !important;
+  transform: translateZ(0);
+  transition: transform 140ms ease, filter 140ms ease, box-shadow 140ms ease !important;
+}
+
+/* Thin top-edge highlight (feels like metal) */
+div[data-testid="stButton"] > button[kind="primary"]::after{
+  content:"";
+  position:absolute;
+  left: 12px;
+  right: 12px;
+  top: 6px;
+  height: 10px;                      /* bigger area */
+  border-radius: 999px;
+  background: linear-gradient(
+    180deg,
+    rgba(255,255,255,0.14),
+    rgba(255,255,255,0.00)
+  );
+  opacity: 0.2;                     /* much softer */
+  pointer-events:none;
+}
+
+/* Diagonal sheen sweep (only visible on hover) */
+div[data-testid="stButton"] > button[kind="primary"]::before{
+  content:"";
+  position:absolute;
+  top:-70%;
+  left:-65%;
+  width: 55%;
+  height: 260%;
+  transform: rotate(25deg);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255,255,255,0.20),
+    transparent
+  );
+  filter: blur(1px);
+  opacity: 0.0;
+  transition: opacity 160ms ease;
+  pointer-events:none;
 }
 
 /* Hover: tiny lift + brighter metal + subtle cool rim */
@@ -1402,45 +1859,77 @@ st.session_state.setdefault("p1_class_filters_widget", [])
 st.session_state.setdefault("p2_type_filters_widget", [])
 st.session_state.setdefault("p2_class_filters_widget", [])
 
-# --- Session state defaults for pretty display ---
-p1_preview = (st.session_state.get("p1_name") or "").strip().title() or "—"
-p2_preview = (st.session_state.get("p2_name") or "").strip().title() or "—"
+# --- Pretty header + live state pills ---
+p1_preview = (st.session_state.get("p1_name") or "").strip() or "—"
+p2_preview = (st.session_state.get("p2_name") or "").strip() or "—"
 gt = st.session_state.get("global_type_filters", [])
 gc = st.session_state.get("global_class_filters", [])
 
-with st.container(border=True):
-    st.title("Select Pokémon")
-    st.write("Filter, randomize, and set up your match like a real arena draft.")
-    
-    status_c1, status_c2, status_c3 = st.columns(3)
-    status_c1.info(f"👤 **P1:** {p1_preview}")
-    status_c2.error(f"👤 **P2:** {p2_preview}")
-    status_c3.success(f"🎯 **Global:** {len(gt)} types • {len(gc)} classes")
+hero_html = """
+<div class="select-hero">
+  <div class="select-hero-top">
+    <div>
+      <div class="select-title">Select Pokémon</div>
+      <div class="select-subtitle">Filter, randomize, and set up your match like a real arena draft.</div>
+    </div>
 
-# ---------- COLLAPSIBLE FILTERS / RANDOMIZERS (NATIVE) ----------
+    <div class="select-badges">
+      <div class="pill purple">👤 <strong>P1:</strong> __P1__</div>
+      <div class="pill red">👤 <strong>P2:</strong> __P2__</div>
+      <div class="pill green">🎯 <strong>Global:</strong> __GT__ types • __GC__ classes</div>
+    </div>
+  </div>
+</div>
+"""
 
+hero_html = (hero_html
+             .replace("__P1__", p1_preview)
+             .replace("__P2__", p2_preview)
+             .replace("__GT__", str(len(gt)))
+             .replace("__GC__", str(len(gc))))
+
+st.markdown(hero_html, unsafe_allow_html=True)
+
+# ---------- COLLAPSIBLE FILTERS / RANDOMIZERS (COMPACT) ----------
+
+st.session_state.setdefault("open_global", False)
+st.session_state.setdefault("open_p1", False)
+st.session_state.setdefault("open_p2", False)
+
+# Helper to make the compact header row
 def dropdown_header(title: str, button_label: str, button_key: str, subtitle=None):
-    col_text, col_btn = st.columns([3, 1], vertical_alignment="center")
-    with col_text:
-        st.subheader(title)
-        if subtitle:
-            st.caption(subtitle)
-    with col_btn:
-        return st.button(button_label, key=button_key, use_container_width=True)
+    subtitle_html = f'<div class="dropdown-sub">{subtitle}</div>' if subtitle else ""
+
+    html = f"""
+<div class="dropdown-head">
+  <div class="dropdown-left">
+    <div class="fancy-icon">{small_ball_html}</div>
+    <div>
+      <div class="dropdown-title">{title}</div>{subtitle_html}
+    </div>
+  </div>
+  <div class="dd-btn-anchor"></div>
+</div>
+""".strip()
+
+    st.markdown(html, unsafe_allow_html=True)
+    return st.button(button_label, key=button_key)
 
 def render_filter_chips(type_list, class_list, empty_text="No filters selected"):
-    if not type_list and not class_list:
-        st.markdown(f"*{empty_text}*")
-        return
-    
     chips = []
     for t in type_list or []:
-        col = TYPE_COLORS.get(t, "#808080")
-        chips.append(f'<span style="background:{col}; color:#fff; padding:2px 8px; border-radius:10px; font-size:0.85em; margin-right:4px;">{t}</span>')
+        chips.append(type_chip_html(t))
     for c in class_list or []:
-        chips.append(f'<span style="background:#444; color:#fff; padding:2px 8px; border-radius:10px; font-size:0.85em; margin-right:4px;">{c}</span>')
-    
-    st.markdown("".join(chips), unsafe_allow_html=True)
+        chips.append(f'<span class="micro"><span class="dot purple"></span>{c}</span>')
+
+    st.markdown(
+        f"""
+        <div class="microchips">
+          {("".join(chips) if chips else f'<span class="micro"><span class="dot"></span>{empty_text}</span>')}
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
 # =========================================================
 # QUICK RANDOMIZE (NO FILTERS) — OUTSIDE RANDOMIZER DROPDOWN
@@ -1804,15 +2293,26 @@ with col1:
     ])
 
     # ✅ NEW: Types + Weak against (no overlap, wraps cleanly)
-    st.markdown(f"<div style='text-align:center;'><strong>Types:</strong> {type_badges_p1 or 'Unknown'}</div>", unsafe_allow_html=True)
-    st.markdown(f"<div style='text-align:center;'><strong>Weak against:</strong> {weak_badges_p1 if weak_badges_p1 else '—'}</div>", unsafe_allow_html=True)
+    st.markdown(
+        f"""
+        <div class="meta-row">
+        <div class="meta-label">Types:</div>
+        <div class="meta-badges">{type_badges_p1 or 'Unknown'}</div>
+        </div>
 
-    with st.container(border=True):
-        st.subheader("Base Stats")
-        render_base_stats_table(p1)
+        <div class="meta-row">
+        <div class="meta-label">Weak against:</div>
+        <div class="meta-badges">{weak_badges_p1 if weak_badges_p1 else '—'}</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
-    with st.container(border=True):
-        st.subheader("Move Selection")
+    st.markdown("<div class='card'><div class='card-title'>Base Stats</div>", unsafe_allow_html=True)
+    render_base_stats_table(p1)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown("<div class='card'><div class='card-title'>Move Selection</div>", unsafe_allow_html=True)
 
     if p1["damaging_moves"]:
         move_types_p1 = get_moves_with_types(tuple(p1["damaging_moves"]))
@@ -1835,7 +2335,7 @@ with col1:
         move1_choice = ""
         st.error("Please select a Pokémon.")
 
-
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 with col2:
@@ -1862,15 +2362,26 @@ with col2:
     ])
 
     # ✅ NEW: Types + Weak against (no overlap, wraps cleanly)
-    st.markdown(f"<div style='text-align:center;'><strong>Types:</strong> {type_badges_p2 or 'Unknown'}</div>", unsafe_allow_html=True)
-    st.markdown(f"<div style='text-align:center;'><strong>Weak against:</strong> {weak_badges_p2 if weak_badges_p2 else '—'}</div>", unsafe_allow_html=True)
+    st.markdown(
+        f"""
+        <div class="meta-row">
+        <div class="meta-label">Types:</div>
+        <div class="meta-badges">{type_badges_p2 or 'Unknown'}</div>
+        </div>
 
-    with st.container(border=True):
-        st.subheader("Base Stats")
-        render_base_stats_table(p2)
+        <div class="meta-row">
+        <div class="meta-label">Weak against:</div>
+        <div class="meta-badges">{weak_badges_p2 if weak_badges_p2 else '—'}</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
-    with st.container(border=True):
-        st.subheader("Move Selection")
+    st.markdown("<div class='card'><div class='card-title'>Base Stats</div>", unsafe_allow_html=True)
+    render_base_stats_table(p2)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown("<div class='card'><div class='card-title'>Move Selection</div>", unsafe_allow_html=True)
 
     if p2["damaging_moves"]:
         move_types_p2 = get_moves_with_types(tuple(p2["damaging_moves"]))
@@ -1893,7 +2404,7 @@ with col2:
         move2_choice = ""
         st.error("Please select a Pokémon.")
 
-
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def get_move_summary(move_name: str):
@@ -1990,43 +2501,80 @@ def power_color(power):
 
     return f"rgb({r},{g},{b})"
 
-def display_move_box(title, move_info):
-    with st.container(border=True):
-        st.subheader(title)
-        if not move_info:
-            st.write("No move selected")
-            return
-            
-        st.write(f"### {move_info['name']}")
-        
-        move_type = move_info["type"]
-        type_color = TYPE_COLORS.get(move_type, "#808080")
-        damage_class = move_info["damage_class"].capitalize()
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown(f"**Type:** <span style='background:{type_color}; color:#fff; padding:2px 8px; border-radius:10px;'>{move_type}</span>", unsafe_allow_html=True)
-            st.write(f"**Class:** {damage_class}")
-        with col2:
-            power = move_info["power"] or "—"
-            acc = move_info["accuracy"]
-            acc_text = f"{acc}%" if acc is not None else "—"
-            
-            st.metric("Power", power)
-            st.metric("Accuracy", acc_text)
+def render_move_box(title, move_info):
+
+    if not move_info:
+        return (
+            f'<div class="move-box">'
+            f'  <div class="move-subtitle">{title}</div>'
+            f'  <div class="move-row">No move selected</div>'
+            f'</div>'
+        )
+
+    acc = move_info.get("accuracy")
+    acc_text = f"{acc}%" if acc is not None else "—"
+    acc_col = accuracy_color(acc)
+
+    move_type = move_info["type"]
+    type_color = TYPE_COLORS.get(move_type, "#808080")
+
+    type_badge = (
+    f'<span class="badge" '
+    f'style="background:{type_color}; color:#FFFFFF; border:none;">'
+    f'{move_type}</span>'
+    )
+
+    damage_class = move_info["damage_class"].capitalize()
+
+    if damage_class == "Physical":
+        class_badge = (
+            '<span class="badge" '
+            'style="background:#C62828; color:#FFD54F; border:none;">'
+            'Physical</span>'
+        )
+    else:  # Special
+        class_badge = (
+            '<span class="badge" '
+            'style="background:#1565C0; color:#111111; border:none;">'
+            'Special</span>'
+        )
+    
+
+    power = move_info["power"]
+    power_text = power if power is not None else "—"
+    power_col = power_color(power)
+
+    return (
+        f'<div class="move-box">'
+        f'  <div class="move-subtitle">{title}</div>'
+        f'  <div class="move-name">{move_info["name"]}</div>'
+        f'  <div class="move-row"><span style="font-weight:800;">Type:</span> {type_badge}</div>'
+        f'  <div class="move-row"><span style="font-weight:800;">Damage class:</span> {class_badge}</div>'
+        f'  <div class="move-row"><span style="font-weight:800;">Power:</span> '
+        f'    <span class="acc-big" style="color:{power_col};">{power_text}</span>'
+        f'  </div>'
+        f'  <div class="move-row"><span style="font-weight:800;">Accuracy:</span> '
+        f'    <span class="acc-big" style="color:{acc_col};">{acc_text}</span>'
+        f'  </div>'
+        f'</div>'
+    )
 
 move1_info = get_move_summary(move1_choice) if move1_choice else {}
 move2_info = get_move_summary(move2_choice) if move2_choice else {}
 
-with st.container(border=True):
-    st.subheader("Selected Moves Details")
-    c1, c2 = st.columns(2)
-    with c1:
-        title_left = f"{p1['name']}'s move" if p1.get("name") else "Pokémon 1 move"
-        display_move_box(title_left, move1_info)
-    with c2:
-        title_right = f"{p2['name']}'s move" if p2.get("name") else "Pokémon 2 move"
-        display_move_box(title_right, move2_info)
+st.markdown("<div class='card'><div class='card-title'>Selected Moves Details</div>", unsafe_allow_html=True)
+
+c1, c2 = st.columns(2)
+
+with c1:
+    title_left = f"{p1['name']}'s move" if p1.get("name") else "Pokémon 1 move"
+    st.markdown(render_move_box(title_left, move1_info), unsafe_allow_html=True)
+
+with c2:
+    title_right = f"{p2['name']}'s move" if p2.get("name") else "Pokémon 2 move"
+    st.markdown(render_move_box(title_right, move2_info), unsafe_allow_html=True)
+
+st.markdown("</div>", unsafe_allow_html=True)
 
 # 6. STAT COMPARISON CHART
 
@@ -2058,10 +2606,9 @@ def build_stat_comparison_df(p1, p2):
     melted = raw.melt(id_vars="pokemon", var_name="stat", value_name="value")
     return melted
 
-with st.container(border=True):
-    st.subheader("Base Stat Comparison")
-    stat_df = build_stat_comparison_df(p1, p2)
-    # ... (rest of chart code remains same)
+st.markdown("<div class='card'><div class='card-title'>Base Stat Comparison</div>", unsafe_allow_html=True)
+
+stat_df = build_stat_comparison_df(p1, p2)
 
 # Stat labels
 stat_df["stat"] = stat_df["stat"].str.replace("-", " ").str.title()
@@ -2115,7 +2662,7 @@ fig_stats.update_layout(
 )
 
 st.plotly_chart(fig_stats, use_container_width=True)
-
+st.markdown("</div>", unsafe_allow_html=True)
 
 # 7. COMBAT MECHANICS
 
@@ -2291,12 +2838,25 @@ def simulate_battle(p1, p2, move1_info, move2_info):
 
 # 8. COMBAT SIMULATION UI
 
-with st.container(border=True):
-    st.subheader("Combat Simulation")
-    st.caption("Simulate a turn-based battle using real stats, type effectiveness, STAB, and damage rolls.")
-    
-    # --- BATTLE BUTTON ---
-    battle_button = st.button("⚔️ BATTLE! ⚔️", key="battle_btn", type="primary", use_container_width=True)
+st.markdown(
+    """
+    <div class="select-hero">
+      <div class="select-hero-top">
+        <div>
+          <div class="select-title">Combat Simulation</div>
+          <div class="select-subtitle">
+            Simulate a turn-based battle using real stats, type effectiveness, STAB, and damage rolls.
+          </div>
+        </div>
+      </div>
+    """,
+    unsafe_allow_html=True
+)
+
+## --- BATTLE BUTTON (styled via wrapper + CSS) ---
+st.markdown("<div class='battle-btn'>", unsafe_allow_html=True)
+battle_button = st.button("⚔️ BATTLE! ⚔️", key="battle_btn", type="primary")
+st.markdown("</div>", unsafe_allow_html=True)
 
 if battle_button:
     if not move1_info or not move2_info:
@@ -2328,71 +2888,74 @@ if battle_button:
                 winner_sprite = p2.get("sprite", "")
 
             # Show winner card with sprite + text
-            with st.container(border=True):
-                st.markdown(f"<div style='text-align:center;'><h2>{winner} wins the battle!</h2></div>", unsafe_allow_html=True)
-                st.markdown(
-                    f"""
-                    <div style="display: flex; justify-content: center;">
+            st.markdown(
+                f"""
+                <div class="winner-card">
+                    <div class="winner-title">{winner} wins the battle!</div>
+                    <div class="winner-sprite-wrap">
                         <img class="winner-sprite" src="{winner_sprite}">
                     </div>
-                    """,
-                    unsafe_allow_html=True
-                )
-
-        with st.container(border=True):
-            st.subheader("HP Over Battle Rounds")
-
-            # Column names
-            hp_df["pokemon"] = hp_df["pokemon"].str.title()
-
-            dark_colors = ["#4DA3FF", "#0057B8"]  # same darker blue tones
-
-            fig_hp = px.line(
-                hp_df,
-                x="round",
-                y="hp",
-                color="pokemon",
-                markers=True,
-                text="hp",
-                color_discrete_sequence=dark_colors,
+                </div>
+                """,
+                unsafe_allow_html=True
             )
 
-            # Bigger + bold data labels
-            fig_hp.update_traces(
-                texttemplate="<b>%{text}</b>",
-                textposition="top center",
-                textfont=dict(size=16, color="white"),
-                line=dict(width=3),
-                marker=dict(size=8),
-            )
+        st.markdown("<div class='card'><div class='card-title'>HP Over Battle Rounds</div>", unsafe_allow_html=True)
 
-            # Axis styling
-            fig_hp.update_xaxes(
-                title="<b>Round</b>",
+        # Column names
+        hp_df["pokemon"] = hp_df["pokemon"].str.title()
+
+        dark_colors = ["#4DA3FF", "#0057B8"]  # same darker blue tones
+
+        fig_hp = px.line(
+            hp_df,
+            x="round",
+            y="hp",
+            color="pokemon",
+            markers=True,
+            text="hp",
+            color_discrete_sequence=dark_colors,
+        )
+
+        # Bigger + bold data labels
+        fig_hp.update_traces(
+            texttemplate="<b>%{text}</b>",
+            textposition="top center",
+            textfont=dict(size=16, color="white"),
+            line=dict(width=3),
+            marker=dict(size=8),
+        )
+
+        # Axis styling
+        fig_hp.update_xaxes(
+            title="<b>Round</b>",
+            title_font=dict(size=22, color="white"),
+            tickfont=dict(size=16, color="white"),
+            showgrid=False,
+            zeroline=False,
+        )
+
+        fig_hp.update_yaxes(
+            title="<b>HP</b>",
+            title_font=dict(size=22, color="white"),
+            tickfont=dict(size=16, color="white"),
+            showgrid=False,
+            zeroline=False,
+        )
+
+        # Legend styling
+        fig_hp.update_layout(
+            legend_title_text="<b>Pokémon</b>",
+            legend=dict(
                 title_font=dict(size=22, color="white"),
-                tickfont=dict(size=16, color="white"),
-                showgrid=False,
-                zeroline=False,
-            )
+                font=dict(size=16, color="white"),
+            ),
+            margin=dict(t=40, b=40, l=20, r=20),
+        )
 
-            fig_hp.update_yaxes(
-                title="<b>HP</b>",
-                title_font=dict(size=22, color="white"),
-                tickfont=dict(size=16, color="white"),
-                showgrid=False,
-                zeroline=False,
-            )
-
-            # Legend styling
-            fig_hp.update_layout(
-                legend_title_text="<b>Pokémon</b>",
-                legend=dict(
-                    title_font=dict(size=22, color="white"),
-                    font=dict(size=16, color="white"),
-                ),
-                margin=dict(t=40, b=40, l=20, r=20),
-            )
-
-            st.plotly_chart(fig_hp, use_container_width=True)
+        st.plotly_chart(fig_hp, use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 else:
     st.info("Press the **BATTLE!** button to run the combat simulation.")
+
+st.markdown("</div>", unsafe_allow_html=True)
